@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="geo-rural-api-base" content="">
+    <title>Formulario de Registro - Geo Rural</title>
+    <link rel="stylesheet" href="styles.css?v=20260323-09">
+</head>
+<body>
+    <div id="appTopPanels" class="app-top-panels hidden">
+        <div class="session-bar">
+            <span id="sessionUser">Sesion no iniciada</span>
+            <button type="button" id="logoutBtn" class="logout-btn">CERRAR SESION</button>
+        </div>
+
+        <section id="adminPanel" class="admin-panel hidden">
+            <h3 id="adminPanelTitle">MENU ADMINISTRADOR</h3>
+            <div class="admin-menu-row">
+                <button type="button" id="adminToggleUsersBtn" class="admin-menu-btn">GESTIONAR USUARIOS</button>
+                <button type="button" id="adminToggleBranchesBtn" class="admin-menu-btn">GESTIONAR SUCURSALES</button>
+                <button type="button" id="adminToggleDocumentsBtn" class="admin-menu-btn">GESTIONAR DOCUMENTOS</button>
+                <button type="button" id="adminToggleEmailBtn" class="admin-menu-btn hidden">CONFIGURAR CORREO</button>
+                <button type="button" id="adminToggleUsageBtn" class="admin-menu-btn hidden">EQUIPOS ACTIVOS</button>
+                <button type="button" id="secretariaViewInvoicesBtn" class="admin-menu-btn hidden">FACTURAS SOLICITADAS</button>
+                <button type="button" id="secretariaQuotationBtn" class="admin-menu-btn hidden">COTIZACION</button>
+                <button type="button" id="adminYearCurrentBtn" class="admin-menu-btn admin-mode-btn">ANO ACTUAL</button>
+                <button type="button" id="adminYearPastBtn" class="admin-menu-btn admin-mode-btn">ANOS ANTERIORES</button>
+            </div>
+            <p id="adminYearMessage" class="helper-text admin-year-message"></p>
+
+            <section id="adminUsersSection" class="admin-users-section">
+                <h4>ADMINISTRACION DE USUARIOS</h4>
+                <div id="adminUserForm" class="admin-form" role="group" aria-label="Crear usuario">
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminUsername">USUARIO</label>
+                            <input type="text" id="adminUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="adminNombre">NOMBRE</label>
+                            <input type="text" id="adminNombre" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="adminSucursal">SUCURSAL</label>
+                            <select id="adminSucursal" required>
+                                <option value="">Seleccione sucursal</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminPassword">CONTRASENA (REQUERIDA AL CREAR, OPCIONAL AL EDITAR)</label>
+                            <input type="password" id="adminPassword">
+                        </div>
+                        <div class="form-group">
+                            <label for="adminRole">ROL</label>
+                            <select id="adminRole">
+                                <option value="OPERADOR">OPERADOR</option>
+                                <option value="SECRETARIA">SECRETARIA</option>
+                                <option value="ADMIN">ADMIN</option>
+                                <option value="SUPER">SUPER</option>
+                            </select>
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <button type="button" id="adminCreateUserBtn" class="admin-create-btn">CREAR USUARIO</button>
+                            <button type="button" id="adminCancelEditBtn" class="admin-cancel-btn hidden">CANCELAR EDICION</button>
+                        </div>
+                    </div>
+                </div>
+                <p id="adminMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="history-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Nombre</th>
+                                <th>Sucursal</th>
+                                <th>Rol</th>
+                                <th>Clave Temporal</th>
+                                <th>Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminUsersBody">
+                            <tr>
+                                <td colspan="6">Sin usuarios para mostrar.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="adminBranchesSection" class="admin-users-section hidden">
+                <h4>ADMINISTRACION DE SUCURSALES</h4>
+                <div id="adminBranchForm" class="admin-form" role="group" aria-label="Gestionar sucursal">
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminBranchName">NOMBRE SUCURSAL</label>
+                            <input type="text" id="adminBranchName" required>
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <button type="button" id="adminBranchSaveBtn" class="admin-create-btn">AGREGAR SUCURSAL</button>
+                            <button type="button" id="adminBranchCancelBtn" class="admin-cancel-btn hidden">CANCELAR EDICION</button>
+                        </div>
+                    </div>
+                </div>
+                <p id="adminBranchMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="history-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Sucursal</th>
+                                <th>Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminBranchesBody">
+                            <tr>
+                                <td colspan="2">Sin sucursales para mostrar.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="adminDocumentsSection" class="admin-users-section hidden">
+                <h4>ADMINISTRACION DE DOCUMENTACION REQUERIDA</h4>
+                <div id="adminDocumentForm" class="admin-form" role="group" aria-label="Gestionar documentacion requerida">
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminDocumentLabel">NOMBRE DEL DOCUMENTO</label>
+                            <input type="text" id="adminDocumentLabel" required>
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <button type="button" id="adminDocumentSaveBtn" class="admin-create-btn">AGREGAR DOCUMENTO</button>
+                            <button type="button" id="adminDocumentCancelBtn" class="admin-cancel-btn hidden">CANCELAR EDICION</button>
+                        </div>
+                    </div>
+                    <p class="helper-text">Estos cambios son visuales y se guardan localmente en este navegador (no en base de datos).</p>
+                </div>
+                <p id="adminDocumentMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="history-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Documento</th>
+                                <th>Identificador</th>
+                                <th>Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminDocumentsBody">
+                            <tr>
+                                <td colspan="3">Sin documentos para mostrar.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="adminEmailSection" class="admin-users-section hidden">
+                <h4>CONFIGURACION DEL SERVICIO DE CORREO</h4>
+                <div id="adminEmailForm" class="admin-form" role="group" aria-label="Configurar servicio de correo">
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminEmailHost">SMTP HOST</label>
+                            <input type="text" id="adminEmailHost" maxlength="255" placeholder="smtp.tudominio.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="adminEmailPort">SMTP PUERTO</label>
+                            <input type="number" id="adminEmailPort" min="1" max="65535" placeholder="587">
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <label class="doc-item">
+                                <input type="checkbox" id="adminEmailSecure">
+                                USAR SSL/TLS (secure)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminEmailUser">SMTP USUARIO</label>
+                            <input type="text" id="adminEmailUser" maxlength="255" placeholder="notificaciones@tudominio.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="adminEmailPassword">SMTP CLAVE (DEJA VACIO PARA MANTENER)</label>
+                            <input type="password" id="adminEmailPassword" maxlength="255" placeholder="********">
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <label class="doc-item">
+                                <input type="checkbox" id="adminEmailKeepPassword" checked>
+                                MANTENER CLAVE ACTUAL SI ESTA VACIA
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminEmailFromEmail">CORREO REMITENTE</label>
+                            <input type="email" id="adminEmailFromEmail" maxlength="255" placeholder="contacto@tudominio.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="adminEmailFromName">NOMBRE REMITENTE</label>
+                            <input type="text" id="adminEmailFromName" maxlength="120" placeholder="Geo Rural">
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <button type="button" id="adminEmailLoadBtn" class="admin-cancel-btn">RECARGAR CONFIG</button>
+                            <button type="button" id="adminEmailSaveBtn" class="admin-create-btn">GUARDAR CORREO</button>
+                        </div>
+                    </div>
+                </div>
+                <p id="adminEmailSource" class="helper-text"></p>
+                <p id="adminEmailMessage" class="form-message" role="status" aria-live="polite"></p>
+            </section>
+
+            <section id="adminUsageSection" class="admin-users-section hidden">
+                <h4>EQUIPOS ACTIVOS EN EL SISTEMA</h4>
+                <div class="admin-usage-toolbar">
+                    <p id="adminUsageSummary" class="helper-text">Sin datos de actividad disponibles.</p>
+                    <button type="button" id="adminUsageRefreshBtn" class="admin-cancel-btn admin-usage-refresh-btn">ACTUALIZAR</button>
+                </div>
+                <p id="adminUsageMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="history-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Rol</th>
+                                <th>Sucursal</th>
+                                <th>Ultima actividad</th>
+                                <th>Expira</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminUsageBody">
+                            <tr>
+                                <td colspan="5">Sin actividad para mostrar.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+
+    </div>
+
+    <div class="container">
+        <section class="auth-card" id="authCard">
+            <h2>INICIO DE SESION</h2>
+            <p>Ingresa con tu usuario para registrar cambios por sucursal.</p>
+            <form id="loginForm" class="auth-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="loginUsername">USUARIO</label>
+                    <input type="text" id="loginUsername" name="loginUsername" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">CONTRASENA</label>
+                    <input type="password" id="loginPassword" name="loginPassword" required>
+                </div>
+                <button type="submit" class="login-btn">INGRESAR</button>
+            </form>
+            <button type="button" id="guestLoginBtn" class="guest-login-btn guest-login-standalone">INGRESAR COMO INVITADO</button>
+            <p id="loginMessage" class="form-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="auth-card hidden" id="passwordChangeCard">
+            <h2>CAMBIO OBLIGATORIO DE CLAVE</h2>
+            <p id="passwordChangeIntro">Por seguridad, debes reemplazar tu clave temporal para continuar.</p>
+            <form id="passwordChangeForm" class="auth-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="currentPassword">CLAVE ACTUAL</label>
+                    <input type="password" id="currentPassword" name="currentPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">NUEVA CLAVE</label>
+                    <input type="password" id="newPassword" name="newPassword" required minlength="6">
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">CONFIRMAR NUEVA CLAVE</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required minlength="6">
+                </div>
+                <button type="submit" class="login-btn">ACTUALIZAR CLAVE</button>
+            </form>
+            <p id="passwordChangeMessage" class="form-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="auth-card hidden" id="utmCaptureCard">
+            <h2>REGISTRO UTM MENSUAL</h2>
+            <p id="utmCaptureIntro">Para continuar, registra y confirma la UTM del mes actual.</p>
+            <p id="utmCapturePeriod" class="helper-text">Periodo: -</p>
+            <p id="utmCaptureSource" class="helper-text"></p>
+            <form id="utmCaptureForm" class="auth-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="utmValue">VALOR UTM</label>
+                    <input type="text" id="utmValue" name="utmValue" inputmode="decimal" placeholder="$ 68.306" required>
+                </div>
+                <div class="form-group">
+                    <label for="utmConfirmValue">CONFIRMAR VALOR UTM</label>
+                    <input
+                        type="text"
+                        id="utmConfirmValue"
+                        name="utmConfirmValue"
+                        inputmode="decimal"
+                        placeholder="$ 68.306"
+                        required
+                    >
+                </div>
+                <button type="submit" class="login-btn">GUARDAR Y CONTINUAR</button>
+            </form>
+            <p id="utmCaptureMessage" class="form-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <form class="registro-form hidden" id="registroForm" autocomplete="off">
+            <section id="registroMainSection">
+            <div class="header">
+                <div>
+                    <h2>FORMULARIO DE REGISTRO</h2>
+                    <span>Registro de Datos</span>
+                </div>
+                <img src="logo.png" alt="Geo Rural Logo" class="logo">
+            </div>
+            <div id="registroActionsRow" class="button-row">
+                <button type="button" class="guardar">GUARDAR</button>
+                <button type="button" class="modificar">MODIFICAR</button>
+                <button type="button" class="buscar">BUSCAR</button>
+                <button type="button" id="buscarFechaBtn" class="buscar">BUSCAR POR FECHA</button>
+                <button type="button" class="eliminar hidden">ELIMINAR</button>
+                <button type="reset" class="limpiar">LIMPIAR</button>
+            </div>
+            <div id="registroActionsSecretaryAnchor"></div>
+
+            <div class="registro-columns">
+                <section class="registro-panel registro-panel-main">
+                    <div class="form-group num-ingreso-group">
+                        <label for="numIngreso">NRO INGRESO</label>
+                        <input type="text" id="numIngreso" name="numIngreso" readonly>
+                        <small id="numIngresoHint" class="input-hint">Autogenerado.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="nombre">NOMBRE O RAZON SOCIAL</label>
+                        <input type="text" id="nombre" name="nombre" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rut">RUT</label>
+                            <input type="text" id="rut" name="rut" placeholder="12.345.678-9" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="telefono">TELEFONO</label>
+                            <input type="text" id="telefono" name="telefono">
+                        </div>
+                    </div>
+
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="correo">CORREO</label>
+                            <input type="email" id="correo" name="correo">
+                        </div>
+                        <div class="form-group">
+                            <label for="region">REGION</label>
+                            <select id="region" name="region" required>
+                                <option value="">Seleccione region</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="comuna">COMUNA</label>
+                            <select id="comuna" name="comuna" required disabled>
+                                <option value="">Seleccione comuna</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="nombrePredio">NOMBRE PREDIO</label>
+                        <input type="text" id="nombrePredio" name="nombrePredio">
+                    </div>
+
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="rol">ROL</label>
+                            <input type="text" id="rol" name="rol" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="numLotes">NRO DE LOTES</label>
+                            <input type="number" id="numLotes" name="numLotes" min="1" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="estado">ESTADO FACTURA</label>
+                            <select id="estado" name="estado">
+                                <option value="no_facturada" selected>No facturada</option>
+                                <option value="facturada">Facturada</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="comentarioGroup">
+                        <label for="comentario">COMENTARIO</label>
+                        <textarea id="comentario" name="comentario" rows="4"></textarea>
+                        <div class="comment-action-row">
+                            <button type="button" id="guardarComentarioBtn" class="guardar">AGREGAR COMENTARIO</button>
+                        </div>
+                    </div>
+
+                    <div id="comentariosHistoryMainAnchor"></div>
+                    <div class="form-group" id="comentariosHistoryGroup">
+                        <label>HISTORIAL DE COMENTARIOS</label>
+                        <div class="history-wrapper" id="comentariosHistoryWrapper">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Comentario</th>
+                                        <th>Usuario</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historialBody">
+                                    <tr>
+                                        <td colspan="3">Sin historial para mostrar.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="registro-panel registro-panel-side">
+                    <section id="facturaDataSection" class="invoice-data-section hidden">
+                        <h4>DATOS PARA FACTURA</h4>
+                        <div class="form-row form-row-triple">
+                            <div class="form-group">
+                                <label for="facturaNombreRazon">NOMBRE / RAZON SOCIAL</label>
+                                <input type="text" id="facturaNombreRazon" maxlength="255">
+                            </div>
+                            <div class="form-group">
+                                <label for="facturaRut">RUT</label>
+                                <input type="text" id="facturaRut" maxlength="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="facturaGiro">GIRO</label>
+                                <input type="text" id="facturaGiro" maxlength="255">
+                            </div>
+                        </div>
+                        <div class="form-row form-row-triple">
+                            <div class="form-group">
+                                <label for="facturaDireccion">DIRECCION</label>
+                                <input type="text" id="facturaDireccion" maxlength="255">
+                            </div>
+                            <div class="form-group">
+                                <label for="facturaComuna">COMUNA</label>
+                                <input type="text" id="facturaComuna" maxlength="120">
+                            </div>
+                            <div class="form-group">
+                                <label for="facturaCiudad">CIUDAD</label>
+                                <input type="text" id="facturaCiudad" maxlength="120">
+                            </div>
+                        </div>
+                        <div class="form-row form-row-triple">
+                            <div class="form-group">
+                                <label for="facturaContacto">CONTACTO</label>
+                                <input type="text" id="facturaContacto" maxlength="255">
+                            </div>
+                            <div class="form-group">
+                                <label for="facturaMonto">MONTO A FACTURAR</label>
+                                <input type="text" id="facturaMonto" maxlength="30" placeholder="Ej: 125000">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="facturaObservacion">OBSERVACION</label>
+                            <textarea id="facturaObservacion" rows="2" maxlength="1000"></textarea>
+                        </div>
+                        <div class="invoice-actions-row">
+                            <button type="button" id="facturaEnviarContadorBtn" class="modificar">ENVIAR AL CONTADOR</button>
+                            <button type="button" id="facturaAgregarListaBtn" class="buscar">AGREGAR A LISTA</button>
+                            <button type="button" id="facturaEnviarPendientesBtn" class="guardar">ENVIAR LISTA PENDIENTE</button>
+                        </div>
+                        <p id="operatorPendingSummary" class="helper-text operator-pending-summary">Facturas pendientes: 0</p>
+                        <div class="history-wrapper operator-pending-wrapper">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Nro Ingreso</th>
+                                        <th>Cliente</th>
+                                        <th>RUT</th>
+                                        <th>Contacto</th>
+                                        <th>Monto</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="operatorPendingInvoicesBody">
+                                    <tr>
+                                        <td colspan="6">Sin facturas pendientes para enviar.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p id="operatorInvoiceMessage" class="form-message" role="status" aria-live="polite"></p>
+                        <p id="facturaFormMessage" class="form-message" role="status" aria-live="polite"></p>
+                    </section>
+
+                    <div class="form-group">
+                        <label>DOCUMENTACION RECIBIDA</label>
+                        <div class="docs-grid" id="documentosContainer">
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="cedula"> Cedula representante</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="rut_documento"> RUT cliente</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="dominio_vigente"> Certificado dominio vigente</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="plano_predial"> Plano predial</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="escritura"> Escritura propiedad</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="avaluo_fiscal"> Certificado avaluo fiscal</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="poder"> Poder simple/notarial</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="domicilio"> Comprobante domicilio</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="solicitud_firmada"> Solicitud firmada</label>
+                            <label class="doc-item"><input type="checkbox" name="documentos" value="otros_antecedentes"> Otros antecedentes</label>
+                        </div>
+                    </div>
+                    <div id="comentariosHistorySideAnchor"></div>
+
+                </section>
+            </div>
+
+            <div id="registroActionsDefaultAnchor"></div>
+
+            <p class="helper-text">Para buscar, ingresa Nombre/Razon social, RUT o ROL y presiona BUSCAR o ENTER.</p>
+            <p id="formMessage" class="form-message" role="status" aria-live="polite"></p>
+            </section>
+        </form>
+    </div>
+
+    <div id="invoiceModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="invoiceModalTitle">
+            <h3 id="invoiceModalTitle">SOLICITUD DE FACTURA</h3>
+            <form id="invoiceModalForm" class="invoice-modal-form" autocomplete="off">
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="invoiceNumIngreso">NRO INGRESO</label>
+                        <input type="text" id="invoiceNumIngreso" maxlength="20" placeholder="Ej: 123-2026">
+                    </div>
+                    <div class="form-group">
+                        <label for="invoiceNombreCliente">CLIENTE / RAZON SOCIAL</label>
+                        <input type="text" id="invoiceNombreCliente" maxlength="255" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="invoiceRutCliente">RUT CLIENTE</label>
+                        <input type="text" id="invoiceRutCliente" maxlength="20" required>
+                    </div>
+                </div>
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="invoiceCorreoFactura">CORREO FACTURACION</label>
+                        <input type="email" id="invoiceCorreoFactura" maxlength="255" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="invoiceDireccion">DIRECCION</label>
+                        <input type="text" id="invoiceDireccion" maxlength="255">
+                    </div>
+                    <div class="form-group">
+                        <label for="invoiceGiro">GIRO</label>
+                        <input type="text" id="invoiceGiro" maxlength="255">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="invoiceComunaRegion">COMUNA / REGION</label>
+                    <input type="text" id="invoiceComunaRegion" maxlength="255">
+                </div>
+                <div class="form-group">
+                    <label for="invoiceReferencia">REFERENCIA / OBSERVACION</label>
+                    <textarea id="invoiceReferencia" rows="3" maxlength="1000"></textarea>
+                </div>
+                <p id="invoiceModalMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="invoice-modal-actions">
+                    <button type="submit" id="invoiceModalSubmitBtn" class="guardar">GUARDAR</button>
+                    <button type="button" id="invoiceModalCancelBtn" class="limpiar">CANCELAR</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="secretariaInvoicesModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="secretariaInvoicesModalTitle">
+            <h3 id="secretariaInvoicesModalTitle">FACTURAS SOLICITADAS</h3>
+            <div class="form-row form-row-triple">
+                <div class="form-group">
+                    <label for="secretariaInvoicesSearchName">BUSCAR POR NOMBRE</label>
+                    <input
+                        type="text"
+                        id="secretariaInvoicesSearchName"
+                        maxlength="255"
+                        placeholder="Nombre o razon social"
+                    >
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoicesSearchDate">BUSCAR POR FECHA</label>
+                    <input type="date" id="secretariaInvoicesSearchDate">
+                </div>
+                <div class="form-group admin-create-wrap">
+                    <button type="button" id="secretariaInvoicesClearFiltersBtn" class="admin-cancel-btn">LIMPIAR FILTROS</button>
+                </div>
+            </div>
+            <p id="secretariaInvoicesSummary" class="helper-text">Solicitudes registradas: 0</p>
+            <div class="history-wrapper">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Sel.</th>
+                            <th>Fecha solicitud</th>
+                            <th>Nro Ingreso</th>
+                            <th>Cliente</th>
+                            <th>RUT</th>
+                            <th>Monto</th>
+                            <th>Estado</th>
+                            <th>Destino</th>
+                        </tr>
+                    </thead>
+                    <tbody id="secretariaInvoicesBody">
+                        <tr>
+                            <td colspan="8">Sin facturas solicitadas para mostrar.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="secretariaInvoicesPagination" class="invoice-pagination hidden">
+                <button type="button" id="secretariaInvoicesFirstPageBtn" class="admin-cancel-btn">&lt;&lt;</button>
+                <button type="button" id="secretariaInvoicesPrevPageBtn" class="admin-cancel-btn">&lt;</button>
+                <p id="secretariaInvoicesPageInfo" class="helper-text">Grupo 1 de 1</p>
+                <button type="button" id="secretariaInvoicesNextPageBtn" class="admin-cancel-btn">&gt;</button>
+                <button type="button" id="secretariaInvoicesLastPageBtn" class="admin-cancel-btn">&gt;&gt;</button>
+            </div>
+            <p id="secretariaInvoicesMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="secretariaInvoicesDetailBtn" class="modificar" disabled>VER DETALLE</button>
+                <button type="button" id="secretariaInvoicesCloseBtn" class="limpiar">CERRAR</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="secretariaInvoiceDetailModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card secretaria-invoice-detail-card" role="dialog" aria-modal="true" aria-labelledby="secretariaInvoiceDetailTitle">
+            <h3 id="secretariaInvoiceDetailTitle">DETALLE DE FACTURA SOLICITADA</h3>
+            <input type="hidden" id="secretariaInvoiceDetailRequestId">
+            <div class="form-row form-row-triple">
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailNumIngreso">NRO INGRESO</label>
+                    <input type="text" id="secretariaInvoiceDetailNumIngreso" maxlength="20" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailEstado">ESTADO</label>
+                    <select id="secretariaInvoiceDetailEstado" disabled>
+                        <option value="PENDIENTE">Pendiente</option>
+                        <option value="ENVIADA">Enviada</option>
+                        <option value="ANULADA">Anulada</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailDestinationEmail">CORREO DESTINO</label>
+                    <input type="email" id="secretariaInvoiceDetailDestinationEmail" maxlength="255" placeholder="contador@empresa.cl">
+                </div>
+            </div>
+            <div class="form-row form-row-triple">
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailNombre">NOMBRE / RAZON SOCIAL</label>
+                    <input type="text" id="secretariaInvoiceDetailNombre" maxlength="255">
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailRut">RUT</label>
+                    <input type="text" id="secretariaInvoiceDetailRut" maxlength="20">
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailMonto">MONTO A FACTURAR</label>
+                    <input type="text" id="secretariaInvoiceDetailMonto" maxlength="30">
+                </div>
+            </div>
+            <div class="form-row form-row-triple">
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailGiro">GIRO</label>
+                    <input type="text" id="secretariaInvoiceDetailGiro" maxlength="255">
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailDireccion">DIRECCION</label>
+                    <input type="text" id="secretariaInvoiceDetailDireccion" maxlength="255">
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailContacto">CONTACTO</label>
+                    <input type="text" id="secretariaInvoiceDetailContacto" maxlength="255">
+                </div>
+            </div>
+            <div class="form-row form-row-triple">
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailCiudad">CIUDAD</label>
+                    <select id="secretariaInvoiceDetailCiudad">
+                        <option value="">Seleccione ciudad</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="secretariaInvoiceDetailComuna">COMUNA</label>
+                    <select id="secretariaInvoiceDetailComuna" disabled>
+                        <option value="">Seleccione comuna</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="secretariaInvoiceDetailObservacion">OBSERVACION</label>
+                <textarea id="secretariaInvoiceDetailObservacion" rows="3" maxlength="1000"></textarea>
+            </div>
+            <p id="secretariaInvoiceDetailMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="secretariaInvoiceDetailSaveBtn" class="guardar">GUARDAR CAMBIOS</button>
+                <button type="button" id="secretariaInvoiceDetailResendBtn" class="modificar">REENVIAR CORREO</button>
+                <button type="button" id="secretariaInvoiceDetailCloseBtn" class="limpiar">CERRAR</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="secretariaQuotationModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card secretaria-quotation-card" role="dialog" aria-modal="true" aria-labelledby="secretariaQuotationTitle">
+            <h3 id="secretariaQuotationTitle">COTIZACION AL CLIENTE</h3>
+            <form id="secretariaQuotationForm" class="invoice-modal-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="secretariaQuotationClientName">NOMBRE CLIENTE</label>
+                    <input
+                        type="text"
+                        id="secretariaQuotationClientName"
+                        maxlength="120"
+                        placeholder="Nombre o razon social del cliente"
+                        required
+                    >
+                </div>
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="secretariaQuotationClientEmail">CORREO CLIENTE</label>
+                        <input
+                            type="email"
+                            id="secretariaQuotationClientEmail"
+                            maxlength="255"
+                            placeholder="cliente@empresa.cl"
+                            required
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label for="secretariaQuotationPeriod">PERIODO UTM</label>
+                        <input type="text" id="secretariaQuotationPeriod" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="secretariaQuotationUtmValue">VALOR UTM</label>
+                        <input type="text" id="secretariaQuotationUtmValue" readonly>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="secretariaQuotationReference">DETALLE OPCIONAL DEL CLIENTE</label>
+                    <textarea
+                        id="secretariaQuotationReference"
+                        rows="2"
+                        maxlength="500"
+                        placeholder="Opcional: nombre, nro de ingreso, predio, comuna, etc."
+                    ></textarea>
+                    <p class="helper-text">Este campo es opcional y solo personaliza el correo.</p>
+                </div>
+                <p id="secretariaQuotationSource" class="helper-text"></p>
+                <div class="history-wrapper quote-table-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>ITEM SERVICIO</th>
+                                <th>VALOR ESTANDAR (UTM)</th>
+                                <th>VALOR REFERENCIAL (CLP)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="secretariaQuotationItemsBody">
+                            <tr>
+                                <td colspan="3">Sin valores de cotizacion para mostrar.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p id="secretariaQuotationTotals" class="helper-text"></p>
+                <p id="secretariaQuotationTemplateInfo" class="helper-text"></p>
+                <p id="secretariaQuotationMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="invoice-modal-actions">
+                    <button type="button" id="secretariaQuotationRefreshBtn" class="buscar">ACTUALIZAR VALORES</button>
+                    <button type="button" id="secretariaQuotationReplaceTemplateBtn" class="modificar hidden">CAMBIAR PDF BASE</button>
+                    <button type="submit" id="secretariaQuotationSendBtn" class="guardar">ENVIAR COTIZACION</button>
+                    <button type="button" id="secretariaQuotationCloseBtn" class="limpiar">CERRAR</button>
+                </div>
+                <input type="file" id="secretariaQuotationTemplateInput" class="hidden" accept="application/pdf,.pdf">
+            </form>
+        </div>
+    </div>
+
+    <div id="mailSendProgressOverlay" class="modal-overlay hidden">
+        <div class="modal-card mail-progress-card" role="status" aria-live="polite" aria-label="Enviando correo">
+            <div class="mail-progress-spinner" aria-hidden="true"></div>
+            <h3 id="mailSendProgressText">Enviando correo...</h3>
+            <p id="mailSendProgressStatus" class="form-message mail-progress-status"></p>
+        </div>
+    </div>
+
+    <div id="dateRangeModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dateRangeModalTitle">
+            <h3 id="dateRangeModalTitle">BUSCAR REGISTROS POR FECHA</h3>
+            <form id="dateRangeForm" class="date-range-form" autocomplete="off">
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="dateRangeFrom">DESDE</label>
+                        <input type="date" id="dateRangeFrom" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="dateRangeTo">HASTA</label>
+                        <input type="date" id="dateRangeTo" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="dateRangeSucursal">SUCURSAL</label>
+                        <select id="dateRangeSucursal">
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <button type="submit" id="dateRangeSearchBtn" class="buscar">BUSCAR RANGO</button>
+                    </div>
+                </div>
+            </form>
+            <div class="history-wrapper">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Sel.</th>
+                            <th>NRO INGRESO</th>
+                            <th>FECHA REGISTRO</th>
+                            <th>NOMBRE</th>
+                            <th>RUT</th>
+                            <th>ROL</th>
+                            <th>REGION</th>
+                            <th>COMUNA</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dateRangeResultsBody">
+                        <tr>
+                            <td colspan="8">Sin resultados para mostrar.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="dateRangeMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="dateRangeAcceptBtn" class="guardar">CARGAR REGISTRO</button>
+                <button type="button" id="dateRangeCancelBtn" class="limpiar">CANCELAR</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=20260323-04"></script>
+</body>
+</html>

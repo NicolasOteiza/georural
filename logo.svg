@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 70" role="img" aria-labelledby="title desc">
+  <title id="title">Geo Rural</title>
+  <desc id="desc">Logotipo textual simple para Geo Rural</desc>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2c7a4b"/>
+      <stop offset="100%" stop-color="#1f5f3a"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="217" height="67" rx="10" fill="url(#g)" stroke="#17472b" stroke-width="3"/>
+  <text x="24" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#ffffff">GEO RURAL</text>
+</svg>

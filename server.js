@@ -1,0 +1,5576 @@
+const express = require('express');
+const cors = require('cors');
+const mysql = require('mysql2/promise');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const https = require('https');
+const nodemailer = require('nodemailer');
+const PDFDocument = require('pdfkit');
+const { PDFDocument: PDFLibDocument, StandardFonts, rgb } = require('pdf-lib');
+
+require('dotenv').config();
+
+const DB_HOST = process.env.DB_HOST || '127.0.0.1';
+const DB_PORT = Number(process.env.DB_PORT || 3306);
+const DB_USER = process.env.DB_USER || 'root';
+const DB_PASSWORD = process.env.DB_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || 'geo_rural';
+const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '127.0.0.1';
+const APP_URL = normalizeText(process.env.APP_URL);
+const API_WRITE_KEY = normalizeText(process.env.API_WRITE_KEY);
+const IS_LOCALHOST_BIND = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+const AUTH_SESSION_HOURS = parsePositiveInt(process.env.AUTH_SESSION_HOURS, 12);
+const LOGIN_MAX_ATTEMPTS = parsePositiveInt(process.env.LOGIN_MAX_ATTEMPTS, 5);
+const LOGIN_WINDOW_MINUTES = parsePositiveInt(process.env.LOGIN_WINDOW_MINUTES, 15);
+const LOGIN_LOCK_MINUTES = parsePositiveInt(process.env.LOGIN_LOCK_MINUTES, 2);
+const MAX_PASSWORD_LENGTH = parsePositiveInt(process.env.MAX_PASSWORD_LENGTH, 200);
+const SESSION_CLEANUP_INTERVAL_MINUTES = parsePositiveInt(process.env.SESSION_CLEANUP_INTERVAL_MINUTES, 30);
+const ACTIVE_SESSION_WINDOW_MINUTES = parsePositiveInt(process.env.ACTIVE_SESSION_WINDOW_MINUTES, 20);
+const SESSION_COOKIE_NAME = 'geo_rural_session';
+const SESSION_COOKIE_MAX_AGE_SECONDS = AUTH_SESSION_HOURS * 60 * 60;
+const AUTH_COOKIE_DOMAIN = normalizeText(process.env.AUTH_COOKIE_DOMAIN || '');
+const AUTH_COOKIE_SAME_SITE = parseSameSiteValue(process.env.AUTH_COOKIE_SAME_SITE, 'Lax');
+const AUTH_COOKIE_SECURE_MODE = parseCookieSecureMode(process.env.AUTH_COOKIE_SECURE, 'auto');
+const DEFAULT_USERS = parseDefaultUsers(process.env.DEFAULT_USERS || '');
+const ROLE_ADMIN = 'ADMIN';
+const ROLE_SECRETARIA = 'SECRETARIA';
+const ROLE_OPERADOR = 'OPERADOR';
+const ROLE_SUPER = 'SUPER';
+const PRIVILEGED_ROLES = Object.freeze([ROLE_ADMIN, ROLE_SUPER]);
+const ASSIGNABLE_ROLES_BY_ADMIN = Object.freeze([ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR]);
+const ASSIGNABLE_ROLES_BY_SUPER = Object.freeze([ROLE_SUPER, ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR]);
+const SUPERUSER_USERNAME = normalizeText(process.env.SUPERUSER_USERNAME || 'superusuario').toLowerCase();
+const SUPERUSER_PASSWORD = String(process.env.SUPERUSER_PASSWORD || '');
+const SUPERUSER_NAME = normalizeText(process.env.SUPERUSER_NAME || 'Super Usuario') || 'Super Usuario';
+const SUPERUSER_BRANCH = normalizeText(process.env.SUPERUSER_BRANCH || 'Casa Matriz') || 'Casa Matriz';
+const GUEST_USERNAME = normalizeText(process.env.GUEST_USERNAME || 'invitado').toLowerCase() || 'invitado';
+const GUEST_DISPLAY_NAME = normalizeText(process.env.GUEST_NAME || 'Invitado') || 'Invitado';
+const GUEST_BRANCH_NAME = normalizeText(process.env.GUEST_BRANCH || 'Casa Matriz') || 'Casa Matriz';
+const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
+const FACTURA_SOLICITUD_ESTADO_PENDIENTE = 'PENDIENTE';
+const FACTURA_SOLICITUD_ESTADO_ENVIADA = 'ENVIADA';
+const FACTURA_SOLICITUD_ESTADO_ANULADA = 'ANULADA';
+const SIMPLE_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UTM_SOURCE_URL = normalizeText(process.env.UTM_SOURCE_URL || 'https://mindicador.cl/api/utm');
+const UTM_SOURCE_TIMEOUT_MS = parsePositiveInt(process.env.UTM_SOURCE_TIMEOUT_MS, 5000);
+const UTM_SOURCE_CACHE_MINUTES = parsePositiveInt(process.env.UTM_SOURCE_CACHE_MINUTES, 30);
+const UTM_SOURCE_ERROR_CACHE_MINUTES = parsePositiveInt(process.env.UTM_SOURCE_ERROR_CACHE_MINUTES, 3);
+const COTIZACION_DOCUMENT_PATH = '/assets/Carta de Cotizacion Geo Rural.pdf';
+const SMTP_HOST = normalizeText(process.env.SMTP_HOST || '');
+const SMTP_PORT = parsePositiveInt(process.env.SMTP_PORT, 587);
+const SMTP_USER = normalizeText(process.env.SMTP_USER || '');
+const SMTP_PASSWORD = String(process.env.SMTP_PASSWORD || '');
+const SMTP_SECURE = parseBooleanFlag(process.env.SMTP_SECURE, false);
+const SMTP_FROM_EMAIL = normalizeText(process.env.SMTP_FROM_EMAIL || SMTP_USER).toLowerCase();
+const SMTP_FROM_NAME = normalizeText(process.env.SMTP_FROM_NAME || 'Geo Rural');
+const SMTP_CONFIG_SINGLETON_ID = 1;
+const SMTP_ENV_CONFIG = Object.freeze({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    user: SMTP_USER,
+    password: SMTP_PASSWORD,
+    fromEmail: SMTP_FROM_EMAIL,
+    fromName: SMTP_FROM_NAME
+});
+const DEFAULT_COTIZACION_SERVICIOS = Object.freeze([
+    {
+        nombreServicio: 'Servicio estandar Geo Rural',
+        valorUtm: 1
+    }
+]);
+const COTIZACION_TEMPLATE_ROWS = Object.freeze([
+    { lotes: '1 a 6', valorUtm: 5.33, y: 572.54 },
+    { lotes: '7 a 15', valorUtm: 6.33, y: 546.86 },
+    { lotes: '16 a 25', valorUtm: 7.33, y: 521.18 },
+    { lotes: '26 a 35', valorUtm: 8.33, y: 495.5 },
+    { lotes: '36 a 45', valorUtm: 9.33, y: 469.82 },
+    { lotes: '46 a 55', valorUtm: 10.33, y: 443.9 },
+    { lotes: '56 a 65', valorUtm: 11.33, y: 418.22 },
+    { lotes: '66 a 75', valorUtm: 12.33, y: 392.54 },
+    { lotes: '76 a 85', valorUtm: 13.33, y: 366.86 },
+    { lotes: '86 a 95', valorUtm: 14.33, y: 341.18 },
+    { lotes: '96 a 105', valorUtm: 15.33, y: 315.5 }
+]);
+const COTIZACION_TABLE_COLUMNS = Object.freeze([
+    { key: 'lotes', title: 'TRAMO LOTES', width: 164, align: 'left' },
+    { key: 'utm', title: 'VALOR UTM', width: 84, align: 'right' },
+    { key: 'neto', title: 'NETO CLP', width: 84, align: 'right' },
+    { key: 'iva', title: 'IVA CLP', width: 74, align: 'right' },
+    { key: 'total', title: 'TOTAL CLP', width: 86, align: 'right' }
+]);
+const COTIZACION_TEMPLATE_CLEAR_AREAS = Object.freeze({
+    utm: { x: 120, y: 634, width: 458, height: 48 },
+    table: { x: 24, y: 260, width: 546, height: 360 }
+});
+const MONTH_NAMES_ES = Object.freeze([
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre'
+]);
+
+const DEFAULT_CORS_ORIGINS = [APP_URL, `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, 'http://localhost', 'http://127.0.0.1']
+    .map((item) => normalizeText(item))
+    .filter((item) => item.length > 0);
+const ALLOWED_ORIGINS = parseCsv(process.env.CORS_ORIGINS, DEFAULT_CORS_ORIGINS);
+const FRONTEND_FILES = ['index.html', 'script.js', 'styles.css', 'logo.png', 'logo.svg'];
+let runtimeBootstrapAdmin = null;
+const loginAttempts = new Map();
+let lastSessionCleanupAt = 0;
+let utmSourceCache = {
+    key: '',
+    value: null,
+    expiresAt: 0
+};
+let smtpTransporter = null;
+let smtpTransporterKey = '';
+
+const app = express();
+let pool;
+
+app.use(
+    cors({
+        origin(origin, callback) {
+            if (!origin) {
+                return callback(null, true);
+            }
+
+            if (isAllowedOrigin(origin)) {
+                return callback(null, true);
+            }
+
+            return callback(null, false);
+        },
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'X-API-Key', 'Authorization'],
+        credentials: true,
+        maxAge: 600
+    })
+);
+app.use(express.json({ limit: '1mb' }));
+
+function parsePositiveInt(value, fallback) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseBooleanFlag(value, fallback = false) {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase();
+    if (['1', 'true', 'yes', 'on', 'si', 's'].includes(normalized)) {
+        return true;
+    }
+    if (['0', 'false', 'no', 'off', 'n'].includes(normalized)) {
+        return false;
+    }
+
+    return Boolean(fallback);
+}
+
+function parseSameSiteValue(value, fallback = 'Lax') {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase();
+    if (normalized === 'strict') {
+        return 'Strict';
+    }
+    if (normalized === 'none') {
+        return 'None';
+    }
+    if (normalized === 'lax') {
+        return 'Lax';
+    }
+
+    return fallback;
+}
+
+function parseCookieSecureMode(value, fallback = 'auto') {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase();
+    if (['always', 'on', 'true', '1', 'yes'].includes(normalized)) {
+        return 'always';
+    }
+    if (['never', 'off', 'false', '0', 'no'].includes(normalized)) {
+        return 'never';
+    }
+    if (normalized === 'auto') {
+        return 'auto';
+    }
+
+    return fallback;
+}
+
+function getStartupHints(error) {
+    if (!error || typeof error !== 'object') {
+        return [];
+    }
+
+    if (error.code === 'ECONNREFUSED' && error.syscall === 'connect') {
+        return [
+            `No hay un servidor MySQL escuchando en ${DB_HOST}:${DB_PORT}.`,
+            'Inicia MySQL desde XAMPP (boton Start en el modulo MySQL).',
+            'Si usas otro host o puerto, ajusta DB_HOST y DB_PORT en .env.'
+        ];
+    }
+
+    if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+        return [
+            `MySQL rechazo las credenciales para ${DB_USER}@${DB_HOST}:${DB_PORT}.`,
+            'Revisa DB_USER y DB_PASSWORD en .env.'
+        ];
+    }
+
+    if (error.code === 'ER_BAD_DB_ERROR') {
+        return [
+            `No se encontro la base "${DB_NAME}" y no se pudo crear automaticamente.`,
+            'Verifica permisos del usuario MySQL o crea el esquema manualmente con database/schema.sql.'
+        ];
+    }
+
+    return [];
+}
+
+function cleanDbIdentifier(value) {
+    return String(value || '').replace(/[^a-zA-Z0-9_]/g, '');
+}
+
+function normalizeText(value) {
+    return String(value || '').trim();
+}
+
+function normalizeRut(value) {
+    return String(value || '').replace(/[^0-9kK]/g, '').toLowerCase();
+}
+
+function calculateRutVerifierDigit(rutBodyDigits) {
+    let sum = 0;
+    let multiplier = 2;
+
+    for (let index = rutBodyDigits.length - 1; index >= 0; index -= 1) {
+        sum += Number(rutBodyDigits[index]) * multiplier;
+        multiplier = multiplier === 7 ? 2 : multiplier + 1;
+    }
+
+    const remainder = 11 - (sum % 11);
+    if (remainder === 11) {
+        return '0';
+    }
+    if (remainder === 10) {
+        return 'k';
+    }
+
+    return String(remainder);
+}
+
+function formatRut(rutBodyDigits, verifierDigit) {
+    const normalizedBody = String(rutBodyDigits || '').replace(/^0+(?=\d)/, '');
+    const safeBody = normalizedBody || '0';
+    const bodyWithDots = safeBody.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return `${bodyWithDots}-${String(verifierDigit || '').toUpperCase()}`;
+}
+
+function normalizeAndFormatRut(value) {
+    const normalized = normalizeRut(value);
+    if (normalized.length < 2) {
+        return '';
+    }
+
+    const rutBodyDigits = normalized.slice(0, -1);
+    const verifierDigit = normalized.slice(-1);
+    if (!/^\d+$/.test(rutBodyDigits)) {
+        return '';
+    }
+
+    const expectedVerifier = calculateRutVerifierDigit(rutBodyDigits);
+    if (verifierDigit !== expectedVerifier) {
+        return '';
+    }
+
+    return formatRut(rutBodyDigits, verifierDigit);
+}
+
+function isValidEmail(value) {
+    return SIMPLE_EMAIL_REGEX.test(String(value || '').trim());
+}
+
+function normalizeEstado(value) {
+    const estado = String(value || '').trim().toLowerCase();
+
+    if (!estado) {
+        return '';
+    }
+
+    if (estado === 'facturada' || estado === 'activo' || estado === 'realizada' || estado === 'si') {
+        return 'facturada';
+    }
+
+    if (estado === 'no_facturada' || estado === 'inactivo' || estado === 'no_realizada' || estado === 'no') {
+        return 'no_facturada';
+    }
+
+    return estado;
+}
+
+function normalizeFacturaSolicitudEstado(value) {
+    const estado = String(value || '').trim().toUpperCase();
+    if (estado === FACTURA_SOLICITUD_ESTADO_PENDIENTE) {
+        return FACTURA_SOLICITUD_ESTADO_PENDIENTE;
+    }
+    if (estado === FACTURA_SOLICITUD_ESTADO_ENVIADA) {
+        return FACTURA_SOLICITUD_ESTADO_ENVIADA;
+    }
+    if (estado === FACTURA_SOLICITUD_ESTADO_ANULADA) {
+        return FACTURA_SOLICITUD_ESTADO_ANULADA;
+    }
+
+    return '';
+}
+
+function normalizeUserRole(value, fallbackRole = ROLE_OPERADOR) {
+    const role = String(value || '').trim().toUpperCase();
+    if (role === ROLE_SUPER) {
+        return ROLE_SUPER;
+    }
+    if (role === ROLE_ADMIN) {
+        return ROLE_ADMIN;
+    }
+    if (role === ROLE_SECRETARIA) {
+        return ROLE_SECRETARIA;
+    }
+    if (role === ROLE_OPERADOR) {
+        return ROLE_OPERADOR;
+    }
+
+    const fallback = String(fallbackRole || '').trim().toUpperCase();
+    if (fallback === ROLE_SUPER || fallback === ROLE_ADMIN || fallback === ROLE_SECRETARIA || fallback === ROLE_OPERADOR) {
+        return fallback;
+    }
+
+    return ROLE_OPERADOR;
+}
+
+function parseCsv(value, fallback = []) {
+    const entries = String(value || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    return entries.length > 0 ? entries : [...fallback];
+}
+
+function parseDefaultUsers(value) {
+    const entries = String(value || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    const users = [];
+    for (const entry of entries) {
+        const [usernameRaw, passwordRaw, branchRaw, nameRaw, roleRaw] = entry
+            .split('|')
+            .map((part) => normalizeText(part));
+        if (!usernameRaw || !passwordRaw || !branchRaw) {
+            continue;
+        }
+
+        const normalizedRole = normalizeUserRole(roleRaw, ROLE_OPERADOR);
+
+        users.push({
+            username: usernameRaw.toLowerCase(),
+            password: passwordRaw,
+            sucursal: branchRaw,
+            nombre: nameRaw || usernameRaw,
+            role: normalizedRole
+        });
+    }
+
+    return users;
+}
+
+function generateSecurePassword(length = 18) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*+-_';
+    let password = '';
+
+    while (password.length < length) {
+        const randomByte = crypto.randomBytes(1)[0];
+        password += chars[randomByte % chars.length];
+    }
+
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[!@#$%*+\-_]/.test(password)) {
+        return generateSecurePassword(length);
+    }
+
+    return password;
+}
+
+function resolveInitialUsers() {
+    if (DEFAULT_USERS.length > 0) {
+        return DEFAULT_USERS;
+    }
+
+    if (!runtimeBootstrapAdmin) {
+        runtimeBootstrapAdmin = {
+            username: 'admin',
+            password: generateSecurePassword(20),
+            sucursal: 'Casa Matriz',
+            nombre: 'Administrador Temporal',
+            role: ROLE_ADMIN
+        };
+
+        console.warn('DEFAULT_USERS vacio: se genero un ADMIN temporal aleatorio para el primer inicio.');
+        console.warn(`Usuario temporal: ${runtimeBootstrapAdmin.username}`);
+        console.warn(`Clave temporal generada: ${runtimeBootstrapAdmin.password}`);
+        console.warn('Ingresa y cambia esta clave inmediatamente.');
+    }
+
+    return [runtimeBootstrapAdmin];
+}
+
+function parseNumIngreso(value) {
+    const match = /^(\d+)-(\d{4})$/.exec(String(value || '').trim());
+    if (!match) {
+        return null;
+    }
+
+    return {
+        correlativo: Number(match[1]),
+        anio: Number(match[2])
+    };
+}
+
+function isValidIsoDateOnly(value) {
+    const text = normalizeText(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+        return false;
+    }
+
+    const parsed = new Date(`${text}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) {
+        return false;
+    }
+
+    return parsed.toISOString().slice(0, 10) === text;
+}
+
+function parseNumLotes(value) {
+    if (value === '' || value === null || typeof value === 'undefined') {
+        return { isValid: true, value: null };
+    }
+
+    const parsed = Number(value);
+    const maxInt32 = 2147483647;
+
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maxInt32) {
+        return { isValid: false, value: null };
+    }
+
+    return { isValid: true, value: parsed };
+}
+
+function parseFacturaMonto(value) {
+    if (value === '' || value === null || typeof value === 'undefined') {
+        return { isValid: true, value: null };
+    }
+
+    const raw = String(value).trim();
+    if (!raw) {
+        return { isValid: true, value: null };
+    }
+
+    const compact = raw.replace(/\$/g, '').replace(/\s+/g, '').replace(/[^0-9,.-]/g, '');
+    if (!compact) {
+        return { isValid: false, value: null };
+    }
+
+    const hasDot = compact.includes('.');
+    const hasComma = compact.includes(',');
+    let normalized = compact;
+
+    if (hasDot && hasComma) {
+        const lastDot = compact.lastIndexOf('.');
+        const lastComma = compact.lastIndexOf(',');
+        if (lastDot > lastComma) {
+            normalized = compact.replace(/,/g, '');
+        } else {
+            normalized = compact.replace(/\./g, '').replace(',', '.');
+        }
+    } else if (hasComma) {
+        if (/^\d{1,3}(,\d{3})+$/.test(compact)) {
+            normalized = compact.replace(/,/g, '');
+        } else {
+            normalized = compact.replace(',', '.');
+        }
+    } else if (hasDot) {
+        if (/^\d{1,3}(\.\d{3})+$/.test(compact)) {
+            normalized = compact.replace(/\./g, '');
+        }
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { isValid: false, value: null };
+    }
+
+    return { isValid: true, value: Number(parsed.toFixed(2)) };
+}
+
+function parseUtmValue(value) {
+    const parsedMonto = parseFacturaMonto(value);
+    if (!parsedMonto.isValid || parsedMonto.value === null) {
+        return { isValid: false, value: null };
+    }
+
+    return { isValid: true, value: Number(parsedMonto.value.toFixed(2)) };
+}
+
+function getCurrentCalendarPeriod() {
+    const now = new Date();
+    return {
+        anio: now.getFullYear(),
+        mes: now.getMonth() + 1,
+        dia: now.getDate()
+    };
+}
+
+function httpGetJson(url, timeoutMs = UTM_SOURCE_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (handler, payload) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            handler(payload);
+        };
+
+        const request = https.get(
+            url,
+            {
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'geo-rural-utm/1.0'
+                }
+            },
+            (response) => {
+                const statusCode = Number(response.statusCode || 0);
+                if (statusCode < 200 || statusCode >= 300) {
+                    response.resume();
+                    finish(reject, new Error(`UTM_SOURCE_HTTP_${statusCode || 'UNKNOWN'}`));
+                    return;
+                }
+
+                let rawBody = '';
+                response.setEncoding('utf8');
+                response.on('data', (chunk) => {
+                    rawBody += String(chunk || '');
+                    if (rawBody.length > 1024 * 1024) {
+                        request.destroy(new Error('UTM_SOURCE_RESPONSE_TOO_LARGE'));
+                    }
+                });
+
+                response.on('end', () => {
+                    try {
+                        finish(resolve, JSON.parse(rawBody));
+                    } catch (error) {
+                        finish(reject, new Error('UTM_SOURCE_INVALID_JSON'));
+                    }
+                });
+            }
+        );
+
+        request.setTimeout(Math.max(1000, Number(timeoutMs) || UTM_SOURCE_TIMEOUT_MS), () => {
+            request.destroy(new Error('UTM_SOURCE_TIMEOUT'));
+        });
+        request.on('error', (error) => {
+            finish(reject, error);
+        });
+    });
+}
+
+function findUtmValueByPeriodFromSource(payload, anio, mes) {
+    if (!payload || !Array.isArray(payload.serie)) {
+        return null;
+    }
+
+    for (const item of payload.serie) {
+        if (!item || typeof item !== 'object') {
+            continue;
+        }
+
+        const fecha = new Date(item.fecha);
+        if (Number.isNaN(fecha.getTime())) {
+            continue;
+        }
+
+        const entryAnio = fecha.getUTCFullYear();
+        const entryMes = fecha.getUTCMonth() + 1;
+        if (entryAnio !== anio || entryMes !== mes) {
+            continue;
+        }
+
+        const parsedValue = Number(item.valor);
+        if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+            continue;
+        }
+
+        return Number(parsedValue.toFixed(2));
+    }
+
+    return null;
+}
+
+async function fetchUtmSuggestionForPeriod(anio, mes) {
+    const safeAnio = Number(anio);
+    const safeMes = Number(mes);
+    if (!Number.isInteger(safeAnio) || !Number.isInteger(safeMes) || safeMes < 1 || safeMes > 12) {
+        return null;
+    }
+
+    const cacheKey = `${safeAnio}-${String(safeMes).padStart(2, '0')}`;
+    if (utmSourceCache.key === cacheKey && Date.now() < Number(utmSourceCache.expiresAt || 0)) {
+        return utmSourceCache.value || null;
+    }
+
+    try {
+        const payload = await httpGetJson(UTM_SOURCE_URL, UTM_SOURCE_TIMEOUT_MS);
+        const value = findUtmValueByPeriodFromSource(payload, safeAnio, safeMes);
+        const suggestion =
+            Number.isFinite(value) && value > 0
+                ? {
+                      valor: value.toFixed(2),
+                      fuente: 'mindicador.cl',
+                      url: UTM_SOURCE_URL,
+                      fetchedAt: new Date().toISOString()
+                  }
+                : null;
+
+        utmSourceCache = {
+            key: cacheKey,
+            value: suggestion,
+            expiresAt: Date.now() + (suggestion ? UTM_SOURCE_CACHE_MINUTES : UTM_SOURCE_ERROR_CACHE_MINUTES) * 60 * 1000
+        };
+        return suggestion;
+    } catch (error) {
+        console.warn(`No fue posible obtener UTM sugerida desde ${UTM_SOURCE_URL}: ${error.message}`);
+        utmSourceCache = {
+            key: cacheKey,
+            value: null,
+            expiresAt: Date.now() + UTM_SOURCE_ERROR_CACHE_MINUTES * 60 * 1000
+        };
+        return null;
+    }
+}
+
+function parseFacturaSolicitudPayload(body = {}) {
+    const rawPayload = body && typeof body === 'object' ? body : {};
+    const destinationEmail = normalizeText(rawPayload.destinationEmail).toLowerCase();
+    const payload = {
+        numIngreso: normalizeText(rawPayload.numIngreso),
+        nombreRazonSocial: normalizeText(rawPayload.nombreRazonSocial || rawPayload.nombreCliente),
+        rut: normalizeText(rawPayload.rut || rawPayload.rutCliente),
+        giro: normalizeText(rawPayload.giro),
+        direccion: normalizeText(rawPayload.direccion),
+        comuna: normalizeText(rawPayload.comuna),
+        ciudad: normalizeText(rawPayload.ciudad),
+        contacto: normalizeText(rawPayload.contacto || rawPayload.correoFactura),
+        observacion: normalizeText(rawPayload.observacion || rawPayload.referencia),
+        montoFacturarRaw: rawPayload.montoFacturar || rawPayload.monto || '',
+        destinationEmail,
+        estado: normalizeFacturaSolicitudEstado(rawPayload.estado)
+    };
+
+    if (!payload.numIngreso) {
+        return { isValid: false, message: 'Debes indicar el NRO INGRESO de la factura.', payload: null };
+    }
+
+    if (!parseNumIngreso(payload.numIngreso)) {
+        return { isValid: false, message: 'NRO INGRESO invalido. Usa formato 123-2026.', payload: null };
+    }
+
+    if (!payload.nombreRazonSocial || !payload.rut) {
+        return { isValid: false, message: 'Completa nombre/razon social y RUT para la factura.', payload: null };
+    }
+
+    if (!payload.giro) {
+        return { isValid: false, message: 'Debes completar el GIRO para la factura.', payload: null };
+    }
+
+    if (!payload.direccion) {
+        return { isValid: false, message: 'Debes completar la DIRECCION para la factura.', payload: null };
+    }
+
+    if (!payload.observacion) {
+        return { isValid: false, message: 'Debes completar la OBSERVACION para la factura.', payload: null };
+    }
+
+    if (!payload.estado) {
+        return { isValid: false, message: 'Estado de solicitud invalido. Usa PENDIENTE, ENVIADA o ANULADA.', payload: null };
+    }
+
+    const formattedRut = normalizeAndFormatRut(payload.rut);
+    if (!formattedRut) {
+        return { isValid: false, message: 'RUT invalido. Usa formato 12.345.678-5.', payload: null };
+    }
+    payload.rut = formattedRut;
+
+    const parsedMonto = parseFacturaMonto(payload.montoFacturarRaw);
+    if (!parsedMonto.isValid || parsedMonto.value === null) {
+        return { isValid: false, message: 'MONTO A FACTURAR invalido.', payload: null };
+    }
+    payload.montoFacturar = parsedMonto.value;
+
+    if (payload.destinationEmail && !isValidEmail(payload.destinationEmail)) {
+        return { isValid: false, message: 'El correo del contador no es valido.', payload: null };
+    }
+
+    if (payload.estado === FACTURA_SOLICITUD_ESTADO_ENVIADA && !payload.destinationEmail) {
+        return {
+            isValid: false,
+            message: 'Debes indicar el correo del contador para registrar una solicitud ENVIADA.',
+            payload: null
+        };
+    }
+
+    const lengthChecks = [
+        ['NRO INGRESO', payload.numIngreso, 20],
+        ['NOMBRE / RAZON SOCIAL', payload.nombreRazonSocial, 255],
+        ['RUT', payload.rut, 20],
+        ['GIRO', payload.giro, 255],
+        ['DIRECCION', payload.direccion, 255],
+        ['COMUNA', payload.comuna, 120],
+        ['CIUDAD', payload.ciudad, 120],
+        ['CONTACTO', payload.contacto, 255],
+        ['CORREO DESTINO', payload.destinationEmail, 255],
+        ['ESTADO', payload.estado, 20]
+    ];
+
+    for (const [label, value, maxLength] of lengthChecks) {
+        if (!value) {
+            continue;
+        }
+
+        if (exceedsMaxLength(value, maxLength)) {
+            return { isValid: false, message: `${label} excede el maximo permitido de ${maxLength} caracteres.`, payload: null };
+        }
+    }
+
+    if (payload.observacion && exceedsMaxLength(payload.observacion, 1000)) {
+        return { isValid: false, message: 'OBSERVACION excede el maximo permitido de 1000 caracteres.', payload: null };
+    }
+
+    return { isValid: true, message: '', payload };
+}
+
+function exceedsMaxLength(value, maxLength) {
+    return String(value || '').length > Number(maxLength || 0);
+}
+
+function validateRegistroPayloadLengths(payload) {
+    const checks = [
+        ['NRO INGRESO', payload.numIngreso, 20],
+        ['NRO INGRESO nuevo', payload.numIngresoNuevo, 20],
+        ['NOMBRE O RAZON SOCIAL', payload.nombre, 255],
+        ['RUT', payload.rut, 20],
+        ['TELEFONO', payload.telefono, 40],
+        ['CORREO', payload.correo, 255],
+        ['REGION', payload.region, 120],
+        ['COMUNA', payload.comuna, 120],
+        ['NOMBRE PREDIO', payload.nombrePredio, 255],
+        ['ROL', payload.rol, 120],
+        ['ESTADO', payload.estado, 40],
+        ['FACTURA NOMBRE / RAZON SOCIAL', payload.facturaNombreRazon, 255],
+        ['FACTURA RUT', payload.facturaRut, 20],
+        ['FACTURA GIRO', payload.facturaGiro, 255],
+        ['FACTURA DIRECCION', payload.facturaDireccion, 255],
+        ['FACTURA COMUNA', payload.facturaComuna, 120],
+        ['FACTURA CIUDAD', payload.facturaCiudad, 120],
+        ['FACTURA CONTACTO', payload.facturaContacto, 255]
+    ];
+
+    for (const [label, value, maxLength] of checks) {
+        if (typeof value === 'undefined' || value === null || value === '') {
+            continue;
+        }
+
+        if (exceedsMaxLength(value, maxLength)) {
+            return `${label} excede el maximo permitido de ${maxLength} caracteres.`;
+        }
+    }
+
+    if (payload.comentario && exceedsMaxLength(payload.comentario, 4000)) {
+        return 'COMENTARIO excede el maximo permitido de 4000 caracteres.';
+    }
+
+    if (payload.facturaObservacion && exceedsMaxLength(payload.facturaObservacion, 1000)) {
+        return 'FACTURA OBSERVACION excede el maximo permitido de 1000 caracteres.';
+    }
+
+    if (Array.isArray(payload.documentos) && payload.documentos.length > 100) {
+        return 'DOCUMENTACION RECIBIDA excede el maximo permitido de 100 elementos.';
+    }
+
+    if (Array.isArray(payload.documentos)) {
+        for (const doc of payload.documentos) {
+            if (exceedsMaxLength(doc, 80)) {
+                return 'Uno de los identificadores de DOCUMENTACION excede el maximo permitido de 80 caracteres.';
+            }
+        }
+    }
+
+    return '';
+}
+
+function safeJsonArray(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const cleanValues = value
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0);
+
+    return [...new Set(cleanValues)];
+}
+
+function parseStoredDocumentList(value) {
+    if (!value) {
+        return [];
+    }
+
+    if (Array.isArray(value)) {
+        return safeJsonArray(value);
+    }
+
+    try {
+        return safeJsonArray(JSON.parse(value));
+    } catch (error) {
+        return [];
+    }
+}
+
+function hashToken(value) {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function createPasswordHash(password, saltHex = '') {
+    const saltBuffer = saltHex ? Buffer.from(saltHex, 'hex') : crypto.randomBytes(16);
+    const hashBuffer = crypto.pbkdf2Sync(String(password || ''), saltBuffer, 120000, 64, 'sha512');
+
+    return {
+        salt: saltBuffer.toString('hex'),
+        hash: hashBuffer.toString('hex')
+    };
+}
+
+function verifyPassword(password, saltHex, expectedHashHex) {
+    if (!saltHex || !expectedHashHex) {
+        return false;
+    }
+
+    const calculated = createPasswordHash(password, saltHex).hash;
+    const left = Buffer.from(calculated, 'hex');
+    const right = Buffer.from(expectedHashHex, 'hex');
+
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    return crypto.timingSafeEqual(left, right);
+}
+
+function generateSessionToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function parseCookies(req) {
+    const cookieHeader = req.get('cookie');
+    if (!cookieHeader) {
+        return {};
+    }
+
+    const pairs = cookieHeader.split(';');
+    const parsed = {};
+    for (const pair of pairs) {
+        const index = pair.indexOf('=');
+        if (index <= 0) {
+            continue;
+        }
+
+        const key = normalizeText(pair.slice(0, index));
+        const rawValue = pair.slice(index + 1);
+        if (!key) {
+            continue;
+        }
+
+        try {
+            parsed[key] = decodeURIComponent(rawValue);
+        } catch (error) {
+            parsed[key] = rawValue;
+        }
+    }
+
+    return parsed;
+}
+
+function buildSessionCookie(value, maxAgeSeconds) {
+    const sameSiteRequiresSecure = AUTH_COOKIE_SAME_SITE === 'None';
+    const shouldUseSecureCookie =
+        sameSiteRequiresSecure || AUTH_COOKIE_SECURE_MODE === 'always' || (AUTH_COOKIE_SECURE_MODE === 'auto' && !IS_LOCALHOST_BIND);
+    const attributes = [
+        `${SESSION_COOKIE_NAME}=${encodeURIComponent(String(value || ''))}`,
+        `Max-Age=${Math.max(0, Number(maxAgeSeconds) || 0)}`,
+        'Path=/',
+        'HttpOnly',
+        `SameSite=${AUTH_COOKIE_SAME_SITE}`
+    ];
+
+    if (AUTH_COOKIE_DOMAIN) {
+        attributes.push(`Domain=${AUTH_COOKIE_DOMAIN}`);
+    }
+
+    if (shouldUseSecureCookie) {
+        attributes.push('Secure');
+    }
+
+    return attributes.join('; ');
+}
+
+function setSessionCookie(res, token) {
+    res.append('Set-Cookie', buildSessionCookie(token, SESSION_COOKIE_MAX_AGE_SECONDS));
+}
+
+function clearSessionCookie(res) {
+    const cookie = [
+        buildSessionCookie('', 0),
+        'Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    ].join('; ');
+    res.append('Set-Cookie', cookie);
+}
+
+function extractBearerToken(req) {
+    const header = normalizeText(req.get('authorization'));
+    const match = /^Bearer\s+(.+)$/i.exec(header);
+    if (match) {
+        return normalizeText(match[1]);
+    }
+
+    const cookies = parseCookies(req);
+    return normalizeText(cookies[SESSION_COOKIE_NAME]);
+}
+
+function formatAuthUser(row) {
+    const username = normalizeText(row.username).toLowerCase();
+
+    return {
+        id: row.user_id,
+        username: row.username,
+        nombre: row.nombre || row.username,
+        sucursal: row.sucursal || '',
+        role: normalizeUserRole(row.role, ROLE_OPERADOR),
+        mustChangePassword: Number(row.must_change_password || 0) === 1,
+        isGuest: username === GUEST_USERNAME
+    };
+}
+
+function isGuestUser(user) {
+    const username = normalizeText(user && user.username).toLowerCase();
+    return Boolean(username) && username === GUEST_USERNAME;
+}
+
+function isGuestUsername(value) {
+    return normalizeText(value).toLowerCase() === GUEST_USERNAME;
+}
+
+function isAdminUser(user) {
+    return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_ADMIN;
+}
+
+function isSuperUser(user) {
+    return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_SUPER;
+}
+
+function isPrivilegedRole(role) {
+    return PRIVILEGED_ROLES.includes(normalizeUserRole(role, ROLE_OPERADOR));
+}
+
+function isAdminOrSuperUser(user) {
+    return isAdminUser(user) || isSuperUser(user);
+}
+
+function isSecretaryUser(user) {
+    return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_SECRETARIA;
+}
+
+function canUseSecretaryFeatures(user) {
+    return isSecretaryUser(user) || isSuperUser(user);
+}
+
+function getAssignableRolesForUser(user) {
+    return isSuperUser(user) ? ASSIGNABLE_ROLES_BY_SUPER : ASSIGNABLE_ROLES_BY_ADMIN;
+}
+
+function formatAssignableRolesLabel(user) {
+    return getAssignableRolesForUser(user).join(', ');
+}
+
+function hasBackofficeRegistroAccess(user) {
+    return isAdminOrSuperUser(user) || isSecretaryUser(user);
+}
+
+function getRegistroAccessScope(user, tableAlias = '') {
+    if (hasBackofficeRegistroAccess(user) || isGuestUser(user)) {
+        return {
+            denied: false,
+            clause: '',
+            params: []
+        };
+    }
+
+    const branch = normalizeText(user && user.sucursal);
+    if (!branch) {
+        return {
+            denied: true,
+            clause: '',
+            params: []
+        };
+    }
+
+    const prefix = tableAlias ? `${tableAlias}.` : '';
+    return {
+        denied: false,
+        clause: `(${prefix}created_by_sucursal = ? OR ${prefix}updated_by_sucursal = ?)`,
+        params: [branch, branch]
+    };
+}
+
+function getFacturaSolicitudAccessScope(user, tableAlias = '') {
+    if (hasBackofficeRegistroAccess(user)) {
+        return {
+            denied: false,
+            clause: '',
+            params: []
+        };
+    }
+
+    const branch = normalizeText(user && user.sucursal);
+    if (!branch) {
+        return {
+            denied: true,
+            clause: '',
+            params: []
+        };
+    }
+
+    const prefix = tableAlias ? `${tableAlias}.` : '';
+    return {
+        denied: false,
+        clause: `${prefix}created_by_sucursal = ?`,
+        params: [branch]
+    };
+}
+
+function buildHistoryComment(action, providedComment, docsAdded = [], docsRemoved = []) {
+    const cleanComment = normalizeText(providedComment);
+
+    if (cleanComment) {
+        return cleanComment;
+    }
+
+    if (action === 'CREACION') {
+        return 'Registro creado.';
+    }
+
+    if (docsAdded.length > 0 || docsRemoved.length > 0) {
+        return 'Documentacion actualizada.';
+    }
+
+    return 'Registro modificado.';
+}
+
+function formatHistoryTextValue(value) {
+    const normalized = normalizeText(value);
+    return normalized || 'vacio';
+}
+
+function formatHistoryEstadoValue(value) {
+    const normalized = normalizeEstado(value);
+    if (!normalized) {
+        return 'sin estado';
+    }
+
+    if (normalized === 'facturada') {
+        return 'facturado';
+    }
+
+    if (normalized === 'no_facturada') {
+        return 'no facturado';
+    }
+
+    return normalized;
+}
+
+function formatHistoryNumLotesValue(value) {
+    if (value === null || typeof value === 'undefined' || value === '') {
+        return 'sin valor';
+    }
+
+    return String(value);
+}
+
+function formatHistoryFacturaMontoValue(value) {
+    if (value === null || typeof value === 'undefined' || value === '') {
+        return 'sin valor';
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 'sin valor';
+    }
+
+    return `$ ${parsed.toLocaleString('es-CL', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+    })}`;
+}
+
+function buildAutomaticModificationComment(existingRow, payload, docsAdded = [], docsRemoved = [], parsedNumLotesValue = null) {
+    const changes = [];
+
+    const appendTextChange = (label, beforeValue, afterValue) => {
+        const before = normalizeText(beforeValue);
+        const after = normalizeText(afterValue);
+        if (before === after) {
+            return;
+        }
+
+        changes.push(`modificacion de ${label}: ${formatHistoryTextValue(before)} -> ${formatHistoryTextValue(after)}`);
+    };
+
+    appendTextChange('nro ingreso', existingRow.num_ingreso, payload.numIngresoNuevo);
+    appendTextChange('nombre', existingRow.nombre, payload.nombre);
+    appendTextChange('rut', existingRow.rut, payload.rut);
+    appendTextChange('telefono', existingRow.telefono, payload.telefono);
+    appendTextChange('correo', existingRow.correo, payload.correo);
+    appendTextChange('region', existingRow.region, payload.region);
+    appendTextChange('comuna', existingRow.comuna, payload.comuna);
+    appendTextChange('nombre predio', existingRow.nombre_predio, payload.nombrePredio);
+    appendTextChange('rol', existingRow.rol, payload.rol);
+    appendTextChange('factura nombre/razon social', existingRow.factura_nombre_razon, payload.facturaNombreRazon);
+    appendTextChange('factura rut', existingRow.factura_rut, payload.facturaRut);
+    appendTextChange('factura giro', existingRow.factura_giro, payload.facturaGiro);
+    appendTextChange('factura direccion', existingRow.factura_direccion, payload.facturaDireccion);
+    appendTextChange('factura comuna', existingRow.factura_comuna, payload.facturaComuna);
+    appendTextChange('factura ciudad', existingRow.factura_ciudad, payload.facturaCiudad);
+    appendTextChange('factura contacto', existingRow.factura_contacto, payload.facturaContacto);
+    appendTextChange('factura observacion', existingRow.factura_observacion, payload.facturaObservacion);
+
+    const beforeLotes = existingRow.num_lotes === null || typeof existingRow.num_lotes === 'undefined' ? null : Number(existingRow.num_lotes);
+    const afterLotes =
+        parsedNumLotesValue === null || typeof parsedNumLotesValue === 'undefined'
+            ? null
+            : Number(parsedNumLotesValue);
+    if (beforeLotes !== afterLotes) {
+        changes.push(
+            `modificacion de nro de lotes: ${formatHistoryNumLotesValue(beforeLotes)} -> ${formatHistoryNumLotesValue(afterLotes)}`
+        );
+    }
+
+    const beforeEstado = normalizeEstado(existingRow.estado);
+    const afterEstado = normalizeEstado(payload.estado);
+    if (beforeEstado !== afterEstado) {
+        changes.push(
+            `modificacion de estado de factura: ${formatHistoryEstadoValue(beforeEstado)} -> ${formatHistoryEstadoValue(afterEstado)}`
+        );
+    }
+
+    const beforeFacturaMonto =
+        existingRow.factura_monto === null || typeof existingRow.factura_monto === 'undefined'
+            ? null
+            : Number(existingRow.factura_monto);
+    const afterFacturaMonto =
+        payload.facturaMonto === null || typeof payload.facturaMonto === 'undefined'
+            ? null
+            : Number(payload.facturaMonto);
+    if (beforeFacturaMonto !== afterFacturaMonto) {
+        changes.push(
+            `modificacion de monto a facturar: ${formatHistoryFacturaMontoValue(beforeFacturaMonto)} -> ${formatHistoryFacturaMontoValue(afterFacturaMonto)}`
+        );
+    }
+
+    if (docsAdded.length > 0) {
+        changes.push(`documentos agregados: ${docsAdded.join(', ')}`);
+    }
+
+    if (docsRemoved.length > 0) {
+        changes.push(`documentos eliminados: ${docsRemoved.join(', ')}`);
+    }
+
+    if (changes.length === 0) {
+        return 'modificacion sin cambios detectados.';
+    }
+
+    return changes.join(' | ');
+}
+
+function toApiRow(row) {
+    const parsedFacturaMonto = Number(row.factura_monto);
+    const facturaMontoValue =
+        row.factura_monto === null || typeof row.factura_monto === 'undefined' || !Number.isFinite(parsedFacturaMonto)
+            ? ''
+            : parsedFacturaMonto.toFixed(2);
+    return {
+        numIngreso: row.num_ingreso,
+        nombre: row.nombre,
+        rut: row.rut,
+        telefono: row.telefono || '',
+        correo: row.correo || '',
+        region: row.region,
+        comuna: row.comuna,
+        nombrePredio: row.nombre_predio || '',
+        rol: row.rol,
+        numLotes: row.num_lotes ?? '',
+        estado: normalizeEstado(row.estado),
+        comentario: row.comentario || '',
+        documentos: parseStoredDocumentList(row.documentos),
+        factura: {
+            nombreRazonSocial: row.factura_nombre_razon || '',
+            rut: row.factura_rut || '',
+            giro: row.factura_giro || '',
+            direccion: row.factura_direccion || '',
+            comuna: row.factura_comuna || '',
+            ciudad: row.factura_ciudad || '',
+            contacto: row.factura_contacto || '',
+            observacion: row.factura_observacion || '',
+            montoFacturar: facturaMontoValue
+        }
+    };
+}
+
+function toFacturaSolicitudRow(row) {
+    const parsedMonto = Number(row.monto_facturar);
+    const montoValue =
+        row.monto_facturar === null || typeof row.monto_facturar === 'undefined' || !Number.isFinite(parsedMonto)
+            ? ''
+            : parsedMonto.toFixed(2);
+
+    const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at);
+    const sentAt =
+        row.sent_at instanceof Date
+            ? row.sent_at.toISOString()
+            : row.sent_at
+              ? String(row.sent_at)
+              : '';
+
+    return {
+        id: Number(row.id),
+        numIngreso: row.num_ingreso || '',
+        nombreRazonSocial: row.nombre_razon_social || '',
+        rut: row.rut || '',
+        giro: row.giro || '',
+        direccion: row.direccion || '',
+        comuna: row.comuna || '',
+        ciudad: row.ciudad || '',
+        contacto: row.contacto || '',
+        observacion: row.observacion || '',
+        montoFacturar: montoValue,
+        estado: normalizeFacturaSolicitudEstado(row.estado) || FACTURA_SOLICITUD_ESTADO_PENDIENTE,
+        destinationEmail: row.destino_email || '',
+        createdBy: row.created_by || '',
+        sucursal: row.created_by_sucursal || '',
+        sentAt,
+        createdAt
+    };
+}
+
+function toHistoryRow(row) {
+    const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at);
+    const usuario = row.sucursal ? `${row.usuario_nombre} (${row.sucursal})` : row.usuario_nombre;
+
+    return {
+        fecha: createdAt,
+        comentario: row.comentario,
+        usuario: usuario || 'Sin usuario'
+    };
+}
+
+function toUtmMensualRow(row) {
+    if (!row || typeof row !== 'object') {
+        return null;
+    }
+
+    const parsedValue = Number(row.valor);
+    return {
+        anio: Number(row.anio),
+        mes: Number(row.mes),
+        valor: Number.isFinite(parsedValue) ? parsedValue.toFixed(2) : '',
+        registradoPor: row.registrado_por_nombre || '',
+        createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
+        updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || '')
+    };
+}
+
+function toCotizacionServicioResumen(row, utmValue) {
+    if (!row || typeof row !== 'object') {
+        return null;
+    }
+
+    const nombreServicio = normalizeText(row.nombre_servicio);
+    const parsedValorUtm = Number(row.valor_utm);
+    const parsedUtmValue = Number(utmValue);
+    if (!nombreServicio || !Number.isFinite(parsedValorUtm) || parsedValorUtm <= 0 || !Number.isFinite(parsedUtmValue) || parsedUtmValue <= 0) {
+        return null;
+    }
+
+    const valorUtm = Number(parsedValorUtm.toFixed(2));
+    const valorPesos = Number((valorUtm * parsedUtmValue).toFixed(2));
+    return {
+        id: Number(row.id),
+        nombreServicio,
+        valorUtm: valorUtm.toFixed(2),
+        valorPesos: valorPesos.toFixed(2)
+    };
+}
+
+function formatCurrencyClp(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return '-';
+    }
+
+    return `$ ${parsed.toLocaleString('es-CL', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+    })}`;
+}
+
+function formatUtmUnits(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return '-';
+    }
+
+    return `${parsed.toLocaleString('es-CL', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+    })} UTM`;
+}
+
+function formatThousandsDots(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return '0';
+    }
+
+    return Math.round(parsed).toLocaleString('es-CL', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    });
+}
+
+function formatTemplateUtmUnits(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return '0,00';
+    }
+
+    return parsed.toLocaleString('es-CL', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function formatMonthlyPeriodLabel(anio, mes) {
+    const safeYear = Number(anio);
+    const safeMonth = Number(mes);
+    const validMonth = Number.isInteger(safeMonth) && safeMonth >= 1 && safeMonth <= 12 ? safeMonth : 1;
+    const validYear = Number.isInteger(safeYear) && safeYear >= 2000 ? safeYear : new Date().getFullYear();
+    return `${(MONTH_NAMES_ES[validMonth - 1] || 'mes').toUpperCase()} ${validYear}`;
+}
+
+function buildCotizacionAttachmentFileName(summary) {
+    const year = Number(summary?.periodo?.anio);
+    const month = Number(summary?.periodo?.mes);
+    const safeYear = Number.isInteger(year) && year >= 2000 ? year : new Date().getFullYear();
+    const safeMonth = Number.isInteger(month) && month >= 1 && month <= 12 ? month : new Date().getMonth() + 1;
+    return `Cotizacion_Geo_Rural_${safeYear}_${String(safeMonth).padStart(2, '0')}.pdf`;
+}
+
+function getCotizacionTemplateFileAbsolutePath() {
+    const normalized = String(COTIZACION_DOCUMENT_PATH || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '');
+    return path.resolve(process.cwd(), normalized);
+}
+
+function isPdfBuffer(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 5) {
+        return false;
+    }
+
+    return buffer.slice(0, 5).toString('ascii') === '%PDF-';
+}
+
+function drawTemplateTextCell(page, font, text, x, y, width, options = {}) {
+    const safeText = String(text || '');
+    const fontSize = Number.isFinite(Number(options.fontSize)) ? Number(options.fontSize) : 11;
+    const align = options.align === 'right' ? 'right' : 'left';
+    const cellPadding = Number.isFinite(Number(options.padding)) ? Number(options.padding) : 1.5;
+    const clearBackground = options.clearBackground !== false;
+    const clearHeight = Number.isFinite(Number(options.clearHeight)) ? Number(options.clearHeight) : fontSize + 3;
+    const clearInsetX = Number.isFinite(Number(options.clearInsetX)) ? Number(options.clearInsetX) : 0.4;
+    const clearOffsetY = Number.isFinite(Number(options.clearOffsetY)) ? Number(options.clearOffsetY) : 1.4;
+    const textWidth = font.widthOfTextAtSize(safeText, fontSize);
+    const drawX = align === 'right' ? Math.max(x + cellPadding, x + width - cellPadding - textWidth) : x + cellPadding;
+    const clearX = x + clearInsetX;
+    const clearY = y - clearOffsetY;
+    const clearWidth = Math.max(2, width - clearInsetX * 2);
+
+    if (clearBackground) {
+        page.drawRectangle({
+            x: clearX,
+            y: clearY,
+            width: clearWidth,
+            height: clearHeight,
+            color: rgb(1, 1, 1)
+        });
+    }
+    page.drawText(safeText, {
+        x: drawX,
+        y,
+        size: fontSize,
+        font,
+        color: rgb(0, 0, 0)
+    });
+}
+
+function drawCotizacionUtmSummaryBox(page, fontBold, utmTitle) {
+    const tableX = 52;
+    const tableWidth = COTIZACION_TABLE_COLUMNS.reduce((sum, column) => sum + Number(column.width || 0), 0);
+    const boxX = tableX;
+    const boxY = 649.2;
+    const boxWidth = tableWidth;
+    const boxHeight = 18.6;
+    const clearMarginLeft = 28;
+    const clearMarginRight = 22;
+    const clearMarginVertical = 6;
+
+    // Limpieza de la zona completa para eliminar el recuadro/texto original del PDF base.
+    page.drawRectangle({
+        x: boxX - clearMarginLeft,
+        y: boxY - clearMarginVertical,
+        width: boxWidth + clearMarginLeft + clearMarginRight,
+        height: boxHeight + clearMarginVertical * 2,
+        color: rgb(1, 1, 1)
+    });
+
+    // Nuevo recuadro de UTM.
+    page.drawRectangle({
+        x: boxX,
+        y: boxY,
+        width: boxWidth,
+        height: boxHeight,
+        color: rgb(1, 1, 1),
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1
+    });
+
+    const fontSize = 11;
+    const safeTitle = String(utmTitle || '');
+    const textWidth = fontBold.widthOfTextAtSize(safeTitle, fontSize);
+    const centeredX = boxX + (boxWidth - textWidth) / 2;
+    const drawX = Number.isFinite(centeredX) ? Math.max(boxX + 6, centeredX) : boxX + 6;
+    const drawY = boxY + (boxHeight - fontSize) / 2 + 0.6;
+
+    page.drawText(safeTitle, {
+        x: drawX,
+        y: drawY,
+        size: fontSize,
+        font: fontBold,
+        color: rgb(0, 0, 0)
+    });
+}
+
+function drawCotizacionDynamicTable(page, font, fontBold, utmValue) {
+    const firstRowY = Number(COTIZACION_TEMPLATE_ROWS[0]?.y || 572.54);
+    const lastRowY = Number(COTIZACION_TEMPLATE_ROWS[COTIZACION_TEMPLATE_ROWS.length - 1]?.y || 315.5);
+    const rowStep =
+        COTIZACION_TEMPLATE_ROWS.length > 1
+            ? Math.abs(Number(COTIZACION_TEMPLATE_ROWS[0].y) - Number(COTIZACION_TEMPLATE_ROWS[1].y))
+            : 25.7;
+    const rowHeight = Number.isFinite(rowStep) && rowStep > 0 ? rowStep : 25.7;
+
+    const tableX = 52;
+    const tableWidth = COTIZACION_TABLE_COLUMNS.reduce((sum, column) => sum + Number(column.width || 0), 0);
+    const headerHeight = 22;
+    const tableTopY = firstRowY + 21.5;
+    const rowsHeight = rowHeight * COTIZACION_TEMPLATE_ROWS.length;
+    const tableHeight = headerHeight + rowsHeight;
+    const tableBottomY = tableTopY - tableHeight;
+    const clearZone = COTIZACION_TEMPLATE_CLEAR_AREAS.table;
+
+    // Se limpia el bloque completo para evitar montajes con valores impresos del PDF base.
+    page.drawRectangle({
+        x: clearZone.x,
+        y: clearZone.y,
+        width: clearZone.width,
+        height: clearZone.height,
+        color: rgb(1, 1, 1)
+    });
+
+    // Marco exterior.
+    page.drawRectangle({
+        x: tableX,
+        y: tableBottomY,
+        width: tableWidth,
+        height: tableHeight,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1
+    });
+
+    // Separador de cabecera.
+    const headerSeparatorY = tableTopY - headerHeight;
+    page.drawLine({
+        start: { x: tableX, y: headerSeparatorY },
+        end: { x: tableX + tableWidth, y: headerSeparatorY },
+        thickness: 1,
+        color: rgb(0, 0, 0)
+    });
+
+    // Lineas verticales y titulos.
+    let columnX = tableX;
+    COTIZACION_TABLE_COLUMNS.forEach((column, columnIndex) => {
+        const currentWidth = Number(column.width || 0);
+        if (columnIndex > 0) {
+            page.drawLine({
+                start: { x: columnX, y: tableBottomY },
+                end: { x: columnX, y: tableTopY },
+                thickness: 1,
+                color: rgb(0, 0, 0)
+            });
+        }
+
+        drawTemplateTextCell(page, fontBold, column.title, columnX + 1, tableTopY - 15.5, currentWidth - 2, {
+            fontSize: 9,
+            align: column.align === 'right' ? 'right' : 'left',
+            clearBackground: false,
+            padding: 4
+        });
+        columnX += currentWidth;
+    });
+
+    // Filas con datos calculados.
+    COTIZACION_TEMPLATE_ROWS.forEach((row, index) => {
+        const rowTopY = headerSeparatorY - index * rowHeight;
+        const rowBottomY = rowTopY - rowHeight;
+        if (index > 0) {
+            page.drawLine({
+                start: { x: tableX, y: rowTopY },
+                end: { x: tableX + tableWidth, y: rowTopY },
+                thickness: 0.8,
+                color: rgb(0, 0, 0)
+            });
+        }
+
+        const unitValue = Number(row.valorUtm);
+        const netValue = Math.round(unitValue * utmValue);
+        const ivaValue = Math.round(netValue * 0.19);
+        const totalValue = netValue + ivaValue;
+        const rowValues = {
+            lotes: String(row.lotes || '-'),
+            utm: formatTemplateUtmUnits(unitValue),
+            neto: `$ ${formatThousandsDots(netValue)}`,
+            iva: `$ ${formatThousandsDots(ivaValue)}`,
+            total: `$ ${formatThousandsDots(totalValue)}`
+        };
+
+        let cellX = tableX;
+        COTIZACION_TABLE_COLUMNS.forEach((column) => {
+            const cellWidth = Number(column.width || 0);
+            drawTemplateTextCell(page, font, rowValues[column.key] || '-', cellX + 1, rowBottomY + 8.2, cellWidth - 2, {
+                fontSize: 10,
+                align: column.align === 'right' ? 'right' : 'left',
+                clearBackground: false,
+                padding: 4
+            });
+            cellX += cellWidth;
+        });
+    });
+}
+
+async function buildCotizacionTemplatePdfBuffer(summary) {
+    const utmValue = Number(summary?.utm?.valor);
+    const year = Number(summary?.periodo?.anio);
+    const month = Number(summary?.periodo?.mes);
+    const safeYear = Number.isInteger(year) && year >= 2000 ? year : new Date().getFullYear();
+    const safeMonth = Number.isInteger(month) && month >= 1 && month <= 12 ? month : new Date().getMonth() + 1;
+
+    if (!Number.isFinite(utmValue) || utmValue <= 0) {
+        throw new Error('UTM vigente invalida para actualizar la carta de cotizacion.');
+    }
+
+    const templateFilePath = getCotizacionTemplateFileAbsolutePath();
+    if (!fs.existsSync(templateFilePath)) {
+        throw new Error(`No se encontro el documento base de cotizacion: ${templateFilePath}`);
+    }
+
+    const templateBytes = fs.readFileSync(templateFilePath);
+    const pdfDoc = await PDFLibDocument.load(templateBytes);
+    const pages = pdfDoc.getPages();
+    if (!pages.length) {
+        throw new Error('El documento base de cotizacion no contiene paginas.');
+    }
+
+    const firstPage = pages[0];
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const monthLabel = String(MONTH_NAMES_ES[safeMonth - 1] || 'mes').toUpperCase();
+    const utmTitle = `VALOR U.T.M. MES DE ${monthLabel} ${safeYear} ($ ${formatThousandsDots(utmValue)})`;
+
+    drawCotizacionUtmSummaryBox(firstPage, fontBold, utmTitle);
+
+    drawCotizacionDynamicTable(firstPage, font, fontBold, utmValue);
+
+    const bytes = await pdfDoc.save();
+    return Buffer.from(bytes);
+}
+
+function buildCotizacionEmailText(summary, clientName, referenciaCliente, authUser) {
+    const nowText = new Date().toLocaleString('es-CL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const periodLabel = formatMonthlyPeriodLabel(summary?.periodo?.anio, summary?.periodo?.mes);
+    const userName = normalizeText(authUser?.nombre || authUser?.username || 'Secretaria');
+    const branch = normalizeText(authUser?.sucursal || 'Sin sucursal');
+    const clientNameText = normalizeText(clientName);
+    const referenciaText = normalizeText(referenciaCliente);
+    const lines = [
+        clientNameText ? `Estimado/a ${clientNameText},` : 'Estimado/a cliente,',
+        '',
+        'Adjuntamos cotizacion actualizada de Geo Rural.',
+        `Fecha: ${nowText}`,
+        `Periodo UTM: ${periodLabel}`,
+        `UTM vigente: ${formatCurrencyClp(summary?.utm?.valor)}`,
+        '',
+        `Total estandar: ${formatUtmUnits(summary?.totalUtm)}`,
+        `Equivalencia referencial en CLP: ${formatCurrencyClp(summary?.totalPesos)}`,
+        '',
+        `Atendido por: ${userName}`,
+        `Sucursal: ${branch}`,
+        '',
+        'Estimado cliente: este mensaje es solo referencial y valido dentro del mes en curso. NO RESPONDER. Para consultas, dirijase a una sucursal.'
+    ];
+
+    if (referenciaText) {
+        lines.splice(6, 0, `Detalle cliente: ${referenciaText}`);
+    }
+
+    return lines.join('\n');
+}
+
+function buildCotizacionPdfBuffer(summary, referenciaCliente, authUser) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({
+            size: 'A4',
+            margin: 48
+        });
+        const chunks = [];
+        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const pageBottom = () => doc.page.height - doc.page.margins.bottom;
+        const periodLabel = formatMonthlyPeriodLabel(summary?.periodo?.anio, summary?.periodo?.mes);
+        const nowText = new Date().toLocaleString('es-CL', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        const userName = normalizeText(authUser?.nombre || authUser?.username || 'Secretaria');
+        const branch = normalizeText(authUser?.sucursal || 'Sin sucursal');
+
+        doc.font('Helvetica-Bold').fontSize(18).text('Carta de Cotizacion Geo Rural', {
+            align: 'center'
+        });
+        doc.moveDown(0.4);
+        doc.font('Helvetica').fontSize(11).text(`Periodo UTM: ${periodLabel}`);
+        doc.text(`Valor UTM vigente: ${formatCurrencyClp(summary?.utm?.valor)}`);
+        doc.text(`Referencia cliente: ${normalizeText(referenciaCliente)}`);
+        doc.text(`Fecha emision: ${nowText}`);
+        doc.moveDown(0.6);
+
+        const colWidths = [290, 90, 120];
+        const startX = doc.page.margins.left;
+        const totalWidth = colWidths.reduce((sum, value) => sum + value, 0);
+        let y = doc.y;
+
+        const ensureSpace = (heightNeeded) => {
+            if (y + heightNeeded <= pageBottom()) {
+                return;
+            }
+
+            doc.addPage();
+            y = doc.page.margins.top;
+        };
+
+        const drawTableRow = (cells, options = {}) => {
+            const isHeader = options.header === true;
+            const alignments = options.alignments || ['left', 'right', 'right'];
+            const cellHeights = cells.map((value, index) =>
+                doc.heightOfString(String(value || ''), {
+                    width: colWidths[index] - 10,
+                    align: alignments[index] || 'left'
+                })
+            );
+            const rowHeight = Math.max(24, ...cellHeights.map((height) => height + 8));
+            ensureSpace(rowHeight);
+
+            if (isHeader) {
+                doc.rect(startX, y, totalWidth, rowHeight).fillOpacity(0.12).fillAndStroke('#2a3d6b', '#8fa6c9');
+                doc.fillOpacity(1);
+            }
+
+            let x = startX;
+            cells.forEach((value, index) => {
+                doc.rect(x, y, colWidths[index], rowHeight).stroke('#8fa6c9');
+                doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica')
+                    .fontSize(10)
+                    .fillColor('#2a3d6b')
+                    .text(String(value || ''), x + 5, y + 4, {
+                        width: colWidths[index] - 10,
+                        align: alignments[index] || 'left'
+                    });
+                x += colWidths[index];
+            });
+            y += rowHeight;
+        };
+
+        drawTableRow(['Item servicio', 'Valor UTM', 'Valor CLP'], {
+            header: true,
+            alignments: ['left', 'center', 'center']
+        });
+
+        const servicios = Array.isArray(summary?.servicios) ? summary.servicios : [];
+        servicios.forEach((item) => {
+            drawTableRow(
+                [item.nombreServicio || '-', formatUtmUnits(item.valorUtm), formatCurrencyClp(item.valorPesos)],
+                {
+                    alignments: ['left', 'right', 'right']
+                }
+            );
+        });
+
+        y += 12;
+        ensureSpace(70);
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#2a3d6b');
+        doc.text(`Total estandar: ${formatUtmUnits(summary?.totalUtm)}`, startX, y);
+        y += 18;
+        doc.text(`Equivalencia referencial CLP: ${formatCurrencyClp(summary?.totalPesos)}`, startX, y);
+        y += 26;
+        doc.font('Helvetica').fontSize(10);
+        doc.text(`Emitido por: ${userName}`, startX, y);
+        y += 14;
+        doc.text(`Sucursal: ${branch}`, startX, y);
+        y += 14;
+        doc.text('Documento generado automaticamente por sistema Geo Rural.', startX, y);
+
+        doc.end();
+    });
+}
+
+function isSmtpConfigReady(config) {
+    const source = config && typeof config === 'object' ? config : {};
+    const host = normalizeText(source.host);
+    const fromEmail = normalizeText(source.fromEmail).toLowerCase();
+    const port = Number(source.port);
+
+    if (!host || !fromEmail || !Number.isInteger(port) || port <= 0 || port > 65535) {
+        return false;
+    }
+
+    return isValidEmail(fromEmail);
+}
+
+function toSmtpRuntimeConfig(source) {
+    const raw = source && typeof source === 'object' ? source : {};
+    const host = normalizeText(raw.host ?? raw.smtp_host ?? raw.smtpHost);
+    const port = parsePositiveInt(raw.port ?? raw.smtp_port ?? raw.smtpPort, 587);
+    const secure = parseBooleanFlag(raw.secure ?? raw.smtp_secure ?? raw.smtpSecure, false);
+    const user = normalizeText(raw.user ?? raw.smtp_user ?? raw.smtpUser);
+    const password = String(raw.password ?? raw.smtp_password ?? raw.smtpPassword ?? '');
+    const rawFromEmail = raw.fromEmail ?? raw.smtp_from_email ?? raw.smtpFromEmail ?? user;
+    const rawFromName = raw.fromName ?? raw.smtp_from_name ?? raw.smtpFromName ?? 'Geo Rural';
+    const fromEmail = normalizeText(rawFromEmail).toLowerCase();
+    const fromName = normalizeText(rawFromName) || 'Geo Rural';
+
+    return {
+        host,
+        port,
+        secure,
+        user,
+        password,
+        fromEmail,
+        fromName
+    };
+}
+
+function toSmtpPublicConfig(config, options = {}) {
+    const source = toSmtpRuntimeConfig(config);
+    const includePassword = options.includePassword === true;
+
+    return {
+        smtpHost: source.host,
+        smtpPort: source.port,
+        smtpSecure: source.secure,
+        smtpUser: source.user,
+        smtpPassword: includePassword ? source.password : '',
+        smtpFromEmail: source.fromEmail,
+        smtpFromName: source.fromName,
+        hasPassword: Boolean(source.password)
+    };
+}
+
+function buildSmtpTransportKey(config) {
+    const source = toSmtpRuntimeConfig(config);
+    return [source.host, source.port, source.secure ? '1' : '0', source.user, source.password].join('|');
+}
+
+function resetSmtpTransporterCache() {
+    smtpTransporter = null;
+    smtpTransporterKey = '';
+}
+
+function buildSmtpFromAddress(config) {
+    const source = toSmtpRuntimeConfig(config);
+    return source.fromName ? `${source.fromName} <${source.fromEmail}>` : source.fromEmail;
+}
+
+function getSmtpTransporter(config) {
+    const runtimeConfig = toSmtpRuntimeConfig(config);
+    if (!isSmtpConfigReady(runtimeConfig)) {
+        return null;
+    }
+
+    const nextKey = buildSmtpTransportKey(runtimeConfig);
+    if (smtpTransporter && smtpTransporterKey === nextKey) {
+        return smtpTransporter;
+    }
+
+    const transportConfig = {
+        host: runtimeConfig.host,
+        port: runtimeConfig.port,
+        secure: runtimeConfig.secure
+    };
+    if (runtimeConfig.user) {
+        transportConfig.auth = {
+            user: runtimeConfig.user,
+            pass: runtimeConfig.password
+        };
+    }
+
+    smtpTransporter = nodemailer.createTransport(transportConfig);
+    smtpTransporterKey = nextKey;
+    return smtpTransporter;
+}
+
+async function getStoredCorreoConfigurationRow() {
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                id,
+                smtp_host,
+                smtp_port,
+                smtp_secure,
+                smtp_user,
+                smtp_password,
+                smtp_from_email,
+                smtp_from_name,
+                updated_by_id,
+                updated_by_nombre,
+                created_at,
+                updated_at
+            FROM correo_configuracion
+            WHERE id = ?
+            LIMIT 1
+        `,
+        [SMTP_CONFIG_SINGLETON_ID]
+    );
+
+    return rows.length > 0 ? rows[0] : null;
+}
+
+async function resolveActiveSmtpConfiguration() {
+    const storedRow = await getStoredCorreoConfigurationRow();
+    if (storedRow) {
+        const storedConfig = toSmtpRuntimeConfig(storedRow);
+        if (isSmtpConfigReady(storedConfig)) {
+            return {
+                source: 'DATABASE',
+                config: storedConfig,
+                storedRow
+            };
+        }
+    }
+
+    const envConfig = toSmtpRuntimeConfig(SMTP_ENV_CONFIG);
+    if (isSmtpConfigReady(envConfig)) {
+        return {
+            source: 'ENV',
+            config: envConfig,
+            storedRow
+        };
+    }
+
+    return {
+        source: 'NONE',
+        config: null,
+        storedRow
+    };
+}
+
+async function buildCurrentCotizacionSummary() {
+    const status = await getCurrentMonthUtmStatus();
+    const utmValue = Number(status?.utm?.valor);
+    if (!Number.isFinite(utmValue) || utmValue <= 0) {
+        return {
+            ok: false,
+            reason: 'UTM_REQUIRED',
+            status
+        };
+    }
+
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                id,
+                nombre_servicio,
+                valor_utm,
+                orden_visual
+            FROM cotizacion_servicios_estandar
+            WHERE activo = 1
+            ORDER BY orden_visual ASC, id ASC
+        `
+    );
+
+    const servicios = rows.map((row) => toCotizacionServicioResumen(row, utmValue)).filter(Boolean);
+    const totalUtm = servicios.reduce((sum, item) => sum + Number(item.valorUtm || 0), 0);
+    const totalPesos = servicios.reduce((sum, item) => sum + Number(item.valorPesos || 0), 0);
+    const documentUrl = encodeURI(COTIZACION_DOCUMENT_PATH);
+
+    return {
+        ok: true,
+        summary: {
+            periodo: {
+                anio: Number(status.anio),
+                mes: Number(status.mes),
+                dia: Number(status.dia)
+            },
+            utm: {
+                valor: Number(utmValue.toFixed(2)).toFixed(2),
+                registradoPor: normalizeText(status?.utm?.registradoPor),
+                updatedAt: normalizeText(status?.utm?.updatedAt)
+            },
+            servicios,
+            totalUtm: totalUtm.toFixed(2),
+            totalPesos: totalPesos.toFixed(2),
+            documento: {
+                nombre: path.basename(COTIZACION_DOCUMENT_PATH),
+                url: documentUrl
+            },
+            suggestedUtm: status?.suggestedUtm || null
+        }
+    };
+}
+
+async function getCurrentMonthUtmStatus() {
+    const period = getCurrentCalendarPeriod();
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                anio,
+                mes,
+                valor,
+                registrado_por_nombre,
+                created_at,
+                updated_at
+            FROM utm_mensual
+            WHERE anio = ? AND mes = ?
+            LIMIT 1
+        `,
+        [period.anio, period.mes]
+    );
+
+    const currentRow = rows.length > 0 ? rows[0] : null;
+    const suggestedUtm = await fetchUtmSuggestionForPeriod(period.anio, period.mes);
+    return {
+        anio: period.anio,
+        mes: period.mes,
+        dia: period.dia,
+        required: period.dia === 1 || !currentRow,
+        existeRegistro: Boolean(currentRow),
+        utm: currentRow ? toUtmMensualRow(currentRow) : null,
+        suggestedUtm: suggestedUtm || null
+    };
+}
+
+function requireWriteAccess(req, res, next) {
+    if (isGuestUser(req.authUser)) {
+        return res.status(403).json({ message: 'El modo invitado es solo lectura.' });
+    }
+
+    if (!API_WRITE_KEY) {
+        return next();
+    }
+
+    const incomingKey = normalizeText(req.get('x-api-key'));
+    if (incomingKey && incomingKey === API_WRITE_KEY) {
+        return next();
+    }
+
+    return res.status(401).json({ message: 'No autorizado para operaciones de escritura.' });
+}
+
+function enforceAllowedOrigin(req, res, next) {
+    const origin = normalizeText(req.get('origin'));
+    if (!origin || isAllowedOrigin(origin)) {
+        return next();
+    }
+
+    return res.status(403).json({ message: 'Origen no permitido.' });
+}
+
+function isAllowedOrigin(origin) {
+    if (!origin) {
+        return true;
+    }
+
+    if (ALLOWED_ORIGINS.includes(origin)) {
+        return true;
+    }
+
+    if (isLocalhostOrigin(origin) && ALLOWED_ORIGINS.some((item) => isLocalhostOrigin(item))) {
+        return true;
+    }
+
+    return false;
+}
+
+function isLocalhostOrigin(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function getClientIp(req) {
+    const forwarded = normalizeText(req.get('x-forwarded-for'));
+    if (forwarded) {
+        return normalizeText(forwarded.split(',')[0]);
+    }
+
+    return normalizeText(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
+function getLoginAttemptKey(req, username) {
+    return `${getClientIp(req)}|${String(username || '').toLowerCase()}`;
+}
+
+function pruneLoginAttempts(now = Date.now()) {
+    const maxAgeMs = Math.max(LOGIN_WINDOW_MINUTES, LOGIN_LOCK_MINUTES) * 60 * 1000 * 2;
+    for (const [key, entry] of loginAttempts.entries()) {
+        if (!entry) {
+            loginAttempts.delete(key);
+            continue;
+        }
+
+        if (entry.blockedUntil && entry.blockedUntil > now) {
+            continue;
+        }
+
+        if (now - entry.windowStartedAt > maxAgeMs) {
+            loginAttempts.delete(key);
+        }
+    }
+}
+
+function getLoginRateLimitState(req, username) {
+    const now = Date.now();
+    pruneLoginAttempts(now);
+    const key = getLoginAttemptKey(req, username);
+    const entry = loginAttempts.get(key);
+
+    if (!entry) {
+        return { blocked: false, retryAfterSeconds: 0 };
+    }
+
+    if (entry.blockedUntil && entry.blockedUntil > now) {
+        return {
+            blocked: true,
+            retryAfterSeconds: Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000))
+        };
+    }
+
+    if (entry.blockedUntil && entry.blockedUntil <= now) {
+        loginAttempts.delete(key);
+    }
+
+    return { blocked: false, retryAfterSeconds: 0 };
+}
+
+function registerFailedLoginAttempt(req, username) {
+    const now = Date.now();
+    const key = getLoginAttemptKey(req, username);
+    const existing = loginAttempts.get(key);
+    const windowMs = LOGIN_WINDOW_MINUTES * 60 * 1000;
+    const lockMs = LOGIN_LOCK_MINUTES * 60 * 1000;
+
+    let entry = existing;
+    if (!entry || now - entry.windowStartedAt > windowMs) {
+        entry = {
+            attempts: 0,
+            windowStartedAt: now,
+            blockedUntil: 0
+        };
+    }
+
+    entry.attempts += 1;
+    if (entry.attempts >= LOGIN_MAX_ATTEMPTS) {
+        entry.attempts = 0;
+        entry.windowStartedAt = now;
+        entry.blockedUntil = now + lockMs;
+    }
+
+    loginAttempts.set(key, entry);
+}
+
+function clearFailedLoginAttempts(req, username) {
+    const key = getLoginAttemptKey(req, username);
+    loginAttempts.delete(key);
+}
+
+async function cleanupExpiredSessionsIfNeeded(force = false) {
+    const now = Date.now();
+    const intervalMs = SESSION_CLEANUP_INTERVAL_MINUTES * 60 * 1000;
+    if (!force && now - lastSessionCleanupAt < intervalMs) {
+        return;
+    }
+
+    await pool.query('DELETE FROM sesiones WHERE expires_at <= NOW() OR revoked_at IS NOT NULL');
+    lastSessionCleanupAt = now;
+}
+
+async function findSessionUserByToken(token) {
+    const tokenHash = hashToken(token);
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                s.id AS session_id,
+                u.id AS user_id,
+                u.username,
+                u.nombre,
+                u.sucursal,
+                u.role,
+                u.must_change_password,
+                u.activo
+            FROM sesiones s
+            INNER JOIN usuarios u ON u.id = s.user_id
+            WHERE s.token_hash = ?
+              AND s.revoked_at IS NULL
+              AND s.expires_at > NOW()
+            LIMIT 1
+        `,
+        [tokenHash]
+    );
+
+    if (!rows.length || Number(rows[0].activo) !== 1) {
+        return null;
+    }
+
+    await pool.execute(
+        'UPDATE sesiones SET last_used_at = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL ? HOUR) WHERE id = ?',
+        [AUTH_SESSION_HOURS, rows[0].session_id]
+    );
+
+    return {
+        sessionId: rows[0].session_id,
+        tokenHash,
+        user: formatAuthUser(rows[0])
+    };
+}
+
+async function requireAuth(req, res, next) {
+    try {
+        const token = extractBearerToken(req);
+        if (!token) {
+            clearSessionCookie(res);
+            console.info(`[Auth] Sesion rechazada: token ausente. IP=${getClientIp(req)}`);
+            return res.status(401).json({ message: 'Debes iniciar sesion para usar el sistema.' });
+        }
+
+        const session = await findSessionUserByToken(token);
+        if (!session) {
+            clearSessionCookie(res);
+            console.info(`[Auth] Sesion rechazada: token invalido o expirado. IP=${getClientIp(req)}`);
+            return res.status(401).json({ message: 'Sesion invalida o expirada. Inicia sesion nuevamente.' });
+        }
+
+        req.authUser = session.user;
+        req.authSessionId = session.sessionId;
+        req.authTokenHash = session.tokenHash;
+        setSessionCookie(res, token);
+        return next();
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible validar la sesion.' });
+    }
+}
+
+function requireAdmin(req, res, next) {
+    if (!isAdminOrSuperUser(req.authUser)) {
+        return res.status(403).json({ message: 'Solo un administrador o superusuario puede realizar esta accion.' });
+    }
+
+    return next();
+}
+
+function requireSuper(req, res, next) {
+    if (!isSuperUser(req.authUser)) {
+        return res.status(403).json({ message: 'Solo el superusuario puede realizar esta accion.' });
+    }
+
+    return next();
+}
+
+function requirePasswordChangeCompleted(req, res, next) {
+    if (req.authUser && req.authUser.mustChangePassword) {
+        return res.status(403).json({
+            message: 'Debes cambiar tu clave temporal antes de continuar.',
+            code: 'PASSWORD_CHANGE_REQUIRED'
+        });
+    }
+
+    return next();
+}
+
+async function ensureColumn(tableName, columnName, definitionSql) {
+    const safeTable = cleanDbIdentifier(tableName);
+    const safeColumn = cleanDbIdentifier(columnName);
+    const [columns] = await pool.query(`SHOW COLUMNS FROM \`${safeTable}\` LIKE '${safeColumn}'`);
+    if (columns.length === 0) {
+        await pool.query(`ALTER TABLE \`${safeTable}\` ADD COLUMN ${definitionSql}`);
+    }
+}
+
+async function ensureUniqueCorrelativoIndex() {
+    const [indexes] = await pool.query("SHOW INDEX FROM registros WHERE Key_name = 'uq_anio_correlativo'");
+    if (indexes.length > 0) {
+        return;
+    }
+
+    await pool.query('ALTER TABLE registros ADD UNIQUE KEY uq_anio_correlativo (anio, correlativo)');
+}
+
+async function ensureRegistrosAuditColumns() {
+    await ensureColumn('registros', 'created_by', '`created_by` VARCHAR(120) NULL AFTER comentario');
+    await ensureColumn('registros', 'created_by_sucursal', '`created_by_sucursal` VARCHAR(120) NULL AFTER created_by');
+    await ensureColumn('registros', 'updated_by', '`updated_by` VARCHAR(120) NULL AFTER created_by_sucursal');
+    await ensureColumn('registros', 'updated_by_sucursal', '`updated_by_sucursal` VARCHAR(120) NULL AFTER updated_by');
+}
+
+async function ensureRegistrosFacturaColumns() {
+    await ensureColumn('registros', 'factura_nombre_razon', '`factura_nombre_razon` VARCHAR(255) NULL AFTER comentario');
+    await ensureColumn('registros', 'factura_rut', '`factura_rut` VARCHAR(20) NULL AFTER factura_nombre_razon');
+    await ensureColumn('registros', 'factura_giro', '`factura_giro` VARCHAR(255) NULL AFTER factura_rut');
+    await ensureColumn('registros', 'factura_direccion', '`factura_direccion` VARCHAR(255) NULL AFTER factura_giro');
+    await ensureColumn('registros', 'factura_comuna', '`factura_comuna` VARCHAR(120) NULL AFTER factura_direccion');
+    await ensureColumn('registros', 'factura_ciudad', '`factura_ciudad` VARCHAR(120) NULL AFTER factura_comuna');
+    await ensureColumn('registros', 'factura_contacto', '`factura_contacto` VARCHAR(255) NULL AFTER factura_ciudad');
+    await ensureColumn('registros', 'factura_observacion', '`factura_observacion` TEXT NULL AFTER factura_contacto');
+    await ensureColumn('registros', 'factura_monto', '`factura_monto` DECIMAL(14,2) NULL AFTER factura_observacion');
+}
+
+async function ensureUsersRoleColumn() {
+    await ensureColumn('usuarios', 'role', "`role` VARCHAR(20) NOT NULL DEFAULT 'OPERADOR' AFTER sucursal");
+    await pool.query("UPDATE usuarios SET role = UPPER(role)");
+    await pool.query(
+        "UPDATE usuarios SET role = 'OPERADOR' WHERE role IS NULL OR role = '' OR role NOT IN ('SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR')"
+    );
+}
+
+async function ensureUsersMustChangePasswordColumn() {
+    await ensureColumn(
+        'usuarios',
+        'must_change_password',
+        '`must_change_password` TINYINT(1) NOT NULL DEFAULT 0 AFTER password_hash'
+    );
+    await pool.query('UPDATE usuarios SET must_change_password = 0 WHERE must_change_password IS NULL');
+}
+
+async function createBranchesTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS sucursales (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            nombre VARCHAR(120) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_sucursales_nombre (nombre)
+        )
+    `);
+}
+
+async function seedBranchesFromUsers() {
+    const branchNames = new Set();
+
+    DEFAULT_USERS.forEach((user) => {
+        const branch = normalizeText(user.sucursal);
+        if (branch) {
+            branchNames.add(branch);
+        }
+    });
+
+    const [userRows] = await pool.execute(
+        `
+            SELECT DISTINCT sucursal
+            FROM usuarios
+            WHERE sucursal IS NOT NULL AND TRIM(sucursal) <> ''
+        `
+    );
+    userRows.forEach((row) => {
+        const branch = normalizeText(row.sucursal);
+        if (branch) {
+            branchNames.add(branch);
+        }
+    });
+
+    for (const branch of branchNames) {
+        await pool.execute('INSERT INTO sucursales (nombre) VALUES (?) ON DUPLICATE KEY UPDATE nombre = nombre', [branch]);
+    }
+}
+
+async function branchExists(branchName) {
+    const cleanBranch = normalizeText(branchName);
+    if (!cleanBranch) {
+        return false;
+    }
+
+    const [rows] = await pool.execute('SELECT id FROM sucursales WHERE nombre = ? LIMIT 1', [cleanBranch]);
+    return rows.length > 0;
+}
+
+async function createAuthTables() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            username VARCHAR(80) NOT NULL,
+            nombre VARCHAR(120) NOT NULL,
+            sucursal VARCHAR(120) NOT NULL,
+            role VARCHAR(20) NOT NULL DEFAULT 'OPERADOR',
+            password_salt CHAR(32) NOT NULL,
+            password_hash CHAR(128) NOT NULL,
+            must_change_password TINYINT(1) NOT NULL DEFAULT 0,
+            activo TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_usuarios_username (username)
+        )
+    `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS sesiones (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at DATETIME NULL DEFAULT NULL,
+            expires_at DATETIME NOT NULL,
+            revoked_at DATETIME NULL DEFAULT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_sesiones_token_hash (token_hash),
+            KEY idx_sesiones_user (user_id),
+            KEY idx_sesiones_expires (expires_at),
+            CONSTRAINT fk_sesiones_user_id FOREIGN KEY (user_id) REFERENCES usuarios(id)
+                ON DELETE CASCADE
+        )
+    `);
+}
+
+async function createHistoryTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS registro_historial (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            registro_id INT UNSIGNED NOT NULL,
+            num_ingreso VARCHAR(20) NOT NULL,
+            accion VARCHAR(40) NOT NULL,
+            comentario TEXT NOT NULL,
+            usuario_nombre VARCHAR(120) NOT NULL,
+            sucursal VARCHAR(120) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_historial_registro_fecha (registro_id, created_at),
+            KEY idx_historial_num_ingreso (num_ingreso),
+            CONSTRAINT fk_historial_registro_id FOREIGN KEY (registro_id) REFERENCES registros(id)
+                ON DELETE CASCADE
+        )
+    `);
+}
+
+async function createFacturaSolicitudesTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS factura_solicitudes (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            num_ingreso VARCHAR(20) NULL,
+            nombre_razon_social VARCHAR(255) NOT NULL,
+            rut VARCHAR(20) NOT NULL,
+            giro VARCHAR(255) NULL,
+            direccion VARCHAR(255) NULL,
+            comuna VARCHAR(120) NULL,
+            ciudad VARCHAR(120) NULL,
+            contacto VARCHAR(255) NULL,
+            observacion TEXT NULL,
+            monto_facturar DECIMAL(14,2) NULL,
+            destino_email VARCHAR(255) NULL,
+            estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+            created_by VARCHAR(120) NULL,
+            created_by_sucursal VARCHAR(120) NULL,
+            updated_by VARCHAR(120) NULL,
+            updated_by_sucursal VARCHAR(120) NULL,
+            sent_at DATETIME NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_factura_solicitudes_estado (estado),
+            KEY idx_factura_solicitudes_created_at (created_at),
+            KEY idx_factura_solicitudes_num_ingreso (num_ingreso),
+            KEY idx_factura_solicitudes_created_sucursal (created_by_sucursal)
+        )
+    `);
+}
+
+async function createUtmMensualTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS utm_mensual (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            anio SMALLINT UNSIGNED NOT NULL,
+            mes TINYINT UNSIGNED NOT NULL,
+            valor DECIMAL(14,2) NOT NULL,
+            registrado_por_id INT UNSIGNED NULL,
+            registrado_por_nombre VARCHAR(120) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_utm_mensual_periodo (anio, mes),
+            KEY idx_utm_mensual_registrado_por_id (registrado_por_id)
+        )
+    `);
+}
+
+async function createCotizacionServiciosTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS cotizacion_servicios_estandar (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            nombre_servicio VARCHAR(255) NOT NULL,
+            valor_utm DECIMAL(14,2) NOT NULL,
+            orden_visual SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+            activo TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_cotizacion_servicios_activo_orden (activo, orden_visual)
+        )
+    `);
+}
+
+async function createCorreoConfiguracionTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS correo_configuracion (
+            id TINYINT UNSIGNED NOT NULL,
+            smtp_host VARCHAR(255) NOT NULL DEFAULT '',
+            smtp_port SMALLINT UNSIGNED NOT NULL DEFAULT 587,
+            smtp_secure TINYINT(1) NOT NULL DEFAULT 0,
+            smtp_user VARCHAR(255) NULL,
+            smtp_password VARCHAR(255) NULL,
+            smtp_from_email VARCHAR(255) NOT NULL DEFAULT '',
+            smtp_from_name VARCHAR(120) NULL,
+            updated_by_id INT UNSIGNED NULL,
+            updated_by_nombre VARCHAR(120) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_correo_config_updated_by (updated_by_id)
+        )
+    `);
+}
+
+async function seedCotizacionServiciosDefaults() {
+    const [rows] = await pool.execute('SELECT COUNT(*) AS total FROM cotizacion_servicios_estandar');
+    const total = Number(rows[0]?.total || 0);
+    if (total > 0) {
+        return;
+    }
+
+    let order = 1;
+    for (const item of DEFAULT_COTIZACION_SERVICIOS) {
+        const nombreServicio = normalizeText(item?.nombreServicio);
+        const valorUtm = Number(item?.valorUtm);
+        if (!nombreServicio || !Number.isFinite(valorUtm) || valorUtm <= 0) {
+            continue;
+        }
+
+        await pool.execute(
+            `
+                INSERT INTO cotizacion_servicios_estandar (
+                    nombre_servicio,
+                    valor_utm,
+                    orden_visual,
+                    activo
+                )
+                VALUES (?, ?, ?, 1)
+            `,
+            [nombreServicio, Number(valorUtm.toFixed(2)), order]
+        );
+        order += 1;
+    }
+}
+
+async function ensureFacturaSolicitudesUniqueIngresoIndex() {
+    const [indexes] = await pool.query("SHOW INDEX FROM factura_solicitudes WHERE Key_name = 'uq_factura_solicitudes_num_ingreso'");
+    if (indexes.length > 0) {
+        return;
+    }
+
+    await pool.execute("UPDATE factura_solicitudes SET num_ingreso = NULL WHERE num_ingreso IS NULL OR TRIM(num_ingreso) = ''");
+
+    const [duplicateIngresoRows] = await pool.execute(
+        `
+            SELECT num_ingreso
+            FROM factura_solicitudes
+            WHERE num_ingreso IS NOT NULL AND TRIM(num_ingreso) <> ''
+            GROUP BY num_ingreso
+            HAVING COUNT(*) > 1
+        `
+    );
+
+    for (const duplicateRow of duplicateIngresoRows) {
+        const numIngreso = normalizeText(duplicateRow.num_ingreso);
+        if (!numIngreso) {
+            continue;
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT id
+                FROM factura_solicitudes
+                WHERE num_ingreso = ?
+                ORDER BY
+                    (estado = ?) DESC,
+                    COALESCE(sent_at, updated_at, created_at) DESC,
+                    id DESC
+            `,
+            [numIngreso, FACTURA_SOLICITUD_ESTADO_ENVIADA]
+        );
+
+        if (rows.length <= 1) {
+            continue;
+        }
+
+        const idsToDelete = rows.slice(1).map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+        if (!idsToDelete.length) {
+            continue;
+        }
+
+        const placeholders = idsToDelete.map(() => '?').join(', ');
+        await pool.execute(`DELETE FROM factura_solicitudes WHERE id IN (${placeholders})`, idsToDelete);
+    }
+
+    await pool.query('ALTER TABLE factura_solicitudes ADD UNIQUE KEY uq_factura_solicitudes_num_ingreso (num_ingreso)');
+}
+
+async function seedDefaultUsers() {
+    const [rows] = await pool.execute('SELECT COUNT(*) AS total FROM usuarios');
+    const total = Number(rows[0].total || 0);
+
+    if (total > 0) {
+        return;
+    }
+
+    const initialUsers = resolveInitialUsers();
+
+    for (const user of initialUsers) {
+        const passwordData = createPasswordHash(user.password);
+        await pool.execute(
+            `
+                INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            `,
+            [user.username, user.nombre, user.sucursal, user.role, passwordData.salt, passwordData.hash]
+        );
+    }
+
+    console.warn(
+        `Se crearon ${initialUsers.length} usuarios iniciales (${initialUsers
+            .map((item) => `${item.username}@${item.sucursal}`)
+            .join(', ')}).`
+    );
+    console.warn('Verifica y cambia las claves iniciales lo antes posible.');
+}
+
+function resolveSuperUserBootstrapPassword() {
+    const normalizedPassword = String(SUPERUSER_PASSWORD || '');
+    if (normalizedPassword.length >= 6 && !exceedsMaxLength(normalizedPassword, MAX_PASSWORD_LENGTH)) {
+        return {
+            password: normalizedPassword,
+            generated: false
+        };
+    }
+
+    return {
+        password: generateSecurePassword(20),
+        generated: true
+    };
+}
+
+async function ensureSuperUserAccount() {
+    if (!SUPERUSER_USERNAME) {
+        throw new Error('SUPERUSER_USERNAME no puede estar vacio.');
+    }
+
+    if (!/^[a-z0-9._-]{3,40}$/.test(SUPERUSER_USERNAME)) {
+        throw new Error('SUPERUSER_USERNAME invalido. Usa 3-40 caracteres (a-z, 0-9, ., _, -).');
+    }
+
+    if (isGuestUsername(SUPERUSER_USERNAME)) {
+        throw new Error('SUPERUSER_USERNAME no puede ser el mismo usuario invitado.');
+    }
+
+    if (exceedsMaxLength(SUPERUSER_NAME, 120) || exceedsMaxLength(SUPERUSER_BRANCH, 120)) {
+        throw new Error('SUPERUSER_NAME y SUPERUSER_BRANCH no pueden exceder 120 caracteres.');
+    }
+
+    let superAccountId = null;
+    const [existingRows] = await pool.execute('SELECT id, role FROM usuarios WHERE username = ? LIMIT 1', [SUPERUSER_USERNAME]);
+    if (existingRows.length > 0) {
+        await pool.execute(
+            `
+                UPDATE usuarios
+                SET nombre = ?, sucursal = ?, role = ?, must_change_password = 0, activo = 1, updated_at = NOW()
+                WHERE id = ?
+            `,
+            [SUPERUSER_NAME, SUPERUSER_BRANCH, ROLE_SUPER, existingRows[0].id]
+        );
+        superAccountId = Number(existingRows[0].id);
+
+        if (normalizeUserRole(existingRows[0].role, ROLE_OPERADOR) !== ROLE_SUPER) {
+            console.warn(`Usuario ${SUPERUSER_USERNAME} promovido a SUPER automaticamente.`);
+        }
+    } else {
+        const superPasswordData = resolveSuperUserBootstrapPassword();
+        const passwordData = createPasswordHash(superPasswordData.password);
+        const [insertResult] = await pool.execute(
+            `
+                INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password, activo)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            `,
+            [SUPERUSER_USERNAME, SUPERUSER_NAME, SUPERUSER_BRANCH, ROLE_SUPER, passwordData.salt, passwordData.hash]
+        );
+        superAccountId = Number(insertResult.insertId);
+
+        if (superPasswordData.generated) {
+            console.warn(
+                `Se creo usuario SUPER por seguridad: ${SUPERUSER_USERNAME}. Clave temporal generada: ${superPasswordData.password}`
+            );
+            console.warn(
+                'Define SUPERUSER_PASSWORD en .env para un valor permanente y cambialo inmediatamente en produccion.'
+            );
+        } else {
+            console.warn(`Se creo usuario SUPER: ${SUPERUSER_USERNAME}.`);
+        }
+    }
+
+    if (Number.isInteger(superAccountId) && superAccountId > 0) {
+        const [demoteResult] = await pool.execute(
+            `
+                UPDATE usuarios
+                SET role = ?, must_change_password = 0, updated_at = NOW()
+                WHERE UPPER(role) = 'SUPER' AND id <> ?
+            `,
+            [ROLE_ADMIN, superAccountId]
+        );
+
+        const demotedCount = Number(demoteResult.affectedRows || 0);
+        if (demotedCount > 0) {
+            console.warn(
+                `Se detectaron ${demotedCount} cuentas SUPER adicionales y se degradaron a ADMIN para mantener una sola cuenta SUPER.`
+            );
+        }
+    }
+}
+
+async function countActivePrivilegedUsers() {
+    const [rows] = await pool.execute(
+        "SELECT COUNT(*) AS totalPrivileged FROM usuarios WHERE UPPER(role) IN ('ADMIN', 'SUPER') AND activo = 1"
+    );
+    return Number(rows[0]?.totalPrivileged || 0);
+}
+
+async function countSuperUsers(excludeUserId = null) {
+    const hasExclusion = Number.isInteger(excludeUserId) && excludeUserId > 0;
+    const [rows] = await pool.execute(
+        `
+            SELECT COUNT(*) AS totalSuper
+            FROM usuarios
+            WHERE UPPER(role) = 'SUPER'
+              ${hasExclusion ? 'AND id <> ?' : ''}
+        `,
+        hasExclusion ? [excludeUserId] : []
+    );
+
+    return Number(rows[0]?.totalSuper || 0);
+}
+
+async function ensureAtLeastOnePrivilegedAccount() {
+    if ((await countActivePrivilegedUsers()) > 0) {
+        return;
+    }
+
+    const preferredPrivileged = resolveInitialUsers().find((item) => isPrivilegedRole(item.role));
+    if (!preferredPrivileged) {
+        throw new Error('No existe usuario ADMIN/SUPER de referencia. Define uno en DEFAULT_USERS o SUPERUSER_*.');
+    }
+
+    const preferredRole = isPrivilegedRole(preferredPrivileged.role) ? preferredPrivileged.role : ROLE_ADMIN;
+    const [existingRows] = await pool.execute('SELECT id FROM usuarios WHERE username = ? LIMIT 1', [preferredPrivileged.username]);
+    if (existingRows.length > 0) {
+        await pool.execute('UPDATE usuarios SET role = ?, activo = 1, must_change_password = 0 WHERE id = ?', [
+            preferredRole,
+            existingRows[0].id
+        ]);
+        console.warn(`Usuario ${preferredPrivileged.username} promovido a ${preferredRole} automaticamente.`);
+        return;
+    }
+
+    const passwordData = createPasswordHash(preferredPrivileged.password);
+    await pool.execute(
+        `
+            INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password, activo)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+        `,
+        [preferredPrivileged.username, preferredPrivileged.nombre, preferredPrivileged.sucursal, preferredRole, passwordData.salt, passwordData.hash]
+    );
+
+    console.warn(`Se creo usuario ${preferredRole} por seguridad: ${preferredPrivileged.username}. Cambia su contrasena.`);
+}
+
+async function ensureGuestUserAccount() {
+    const generatedPassword = createPasswordHash(generateSecurePassword(24));
+    await pool.execute(
+        `
+            INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password, activo)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            ON DUPLICATE KEY UPDATE
+                nombre = VALUES(nombre),
+                sucursal = VALUES(sucursal),
+                role = VALUES(role),
+                must_change_password = 0
+        `,
+        [
+            GUEST_USERNAME,
+            GUEST_DISPLAY_NAME,
+            GUEST_BRANCH_NAME,
+            ROLE_OPERADOR,
+            generatedPassword.salt,
+            generatedPassword.hash
+        ]
+    );
+
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                id AS user_id,
+                username,
+                nombre,
+                sucursal,
+                role,
+                must_change_password,
+                activo
+            FROM usuarios
+            WHERE username = ?
+            LIMIT 1
+        `,
+        [GUEST_USERNAME]
+    );
+
+    if (!rows.length) {
+        throw new Error('No fue posible inicializar el usuario invitado.');
+    }
+
+    return rows[0];
+}
+
+async function reserveNextIngreso(connection, anio) {
+    const [rows] = await connection.execute(
+        'SELECT COALESCE(MAX(correlativo), 0) AS maxCorrelativo FROM registros WHERE anio = ? FOR UPDATE',
+        [anio]
+    );
+
+    const nextCorrelativo = Number(rows[0].maxCorrelativo || 0) + 1;
+    return {
+        anio,
+        correlativo: nextCorrelativo,
+        numIngreso: `${nextCorrelativo}-${anio}`
+    };
+}
+
+async function insertHistoryEntry(executor, historyPayload) {
+    await executor.execute(
+        `
+            INSERT INTO registro_historial (
+                registro_id,
+                num_ingreso,
+                accion,
+                comentario,
+                usuario_nombre,
+                sucursal
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+            historyPayload.registroId,
+            historyPayload.numIngreso,
+            historyPayload.accion,
+            historyPayload.comentario,
+            historyPayload.usuarioNombre,
+            historyPayload.sucursal || null
+        ]
+    );
+}
+
+async function fetchHistoryByRegistroId(registroId) {
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                created_at,
+                comentario,
+                usuario_nombre,
+                sucursal
+            FROM registro_historial
+            WHERE registro_id = ?
+            ORDER BY created_at DESC
+        `,
+        [registroId]
+    );
+
+    return rows.map(toHistoryRow);
+}
+
+async function initDatabase() {
+    const sanitizedDbName = cleanDbIdentifier(DB_NAME) || 'geo_rural';
+    const rootConnection = await mysql.createConnection({
+        host: DB_HOST,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASSWORD
+    });
+
+    await rootConnection.query(
+        `CREATE DATABASE IF NOT EXISTS \`${sanitizedDbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+    await rootConnection.end();
+
+    pool = mysql.createPool({
+        host: DB_HOST,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASSWORD,
+        database: sanitizedDbName,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
+    });
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS registros (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            num_ingreso VARCHAR(20) NOT NULL,
+            correlativo INT UNSIGNED NOT NULL,
+            anio SMALLINT UNSIGNED NOT NULL,
+            nombre VARCHAR(255) NOT NULL,
+            rut VARCHAR(20) NOT NULL,
+            telefono VARCHAR(40) NULL,
+            correo VARCHAR(255) NULL,
+            region VARCHAR(120) NOT NULL,
+            comuna VARCHAR(120) NOT NULL,
+            nombre_predio VARCHAR(255) NULL,
+            rol VARCHAR(120) NOT NULL,
+            num_lotes INT NULL,
+            estado VARCHAR(40) NULL,
+            comentario TEXT NULL,
+            factura_nombre_razon VARCHAR(255) NULL,
+            factura_rut VARCHAR(20) NULL,
+            factura_giro VARCHAR(255) NULL,
+            factura_direccion VARCHAR(255) NULL,
+            factura_comuna VARCHAR(120) NULL,
+            factura_ciudad VARCHAR(120) NULL,
+            factura_contacto VARCHAR(255) NULL,
+            factura_observacion TEXT NULL,
+            factura_monto DECIMAL(14,2) NULL,
+            created_by VARCHAR(120) NULL,
+            created_by_sucursal VARCHAR(120) NULL,
+            updated_by VARCHAR(120) NULL,
+            updated_by_sucursal VARCHAR(120) NULL,
+            documentos JSON NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_num_ingreso (num_ingreso),
+            UNIQUE KEY uq_anio_correlativo (anio, correlativo),
+            KEY idx_nombre (nombre),
+            KEY idx_rut (rut),
+            KEY idx_rol (rol)
+        )
+    `);
+
+    try {
+        await ensureUniqueCorrelativoIndex();
+        await ensureRegistrosAuditColumns();
+        await ensureRegistrosFacturaColumns();
+        await createAuthTables();
+        await cleanupExpiredSessionsIfNeeded(true);
+        await ensureUsersRoleColumn();
+        await ensureUsersMustChangePasswordColumn();
+        await createBranchesTable();
+        await createHistoryTable();
+        await createFacturaSolicitudesTable();
+        await createUtmMensualTable();
+        await createCotizacionServiciosTable();
+        await createCorreoConfiguracionTable();
+        await seedCotizacionServiciosDefaults();
+        await ensureFacturaSolicitudesUniqueIngresoIndex();
+        await seedDefaultUsers();
+        await ensureSuperUserAccount();
+        await ensureAtLeastOnePrivilegedAccount();
+        await ensureGuestUserAccount();
+        await seedBranchesFromUsers();
+    } catch (error) {
+        console.error('No fue posible terminar la inicializacion de la base:', error.message);
+        throw error;
+    }
+}
+
+app.get('/api/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ ok: false, message: 'Error de conexion con base de datos.' });
+    }
+});
+
+app.use('/api', enforceAllowedOrigin);
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const username = normalizeText(req.body.username).toLowerCase();
+        const password = String(req.body.password || '');
+
+        if (!username || !password) {
+            return res.status(400).json({ message: 'Ingresa usuario y contrasena.' });
+        }
+
+        if (exceedsMaxLength(username, 80) || exceedsMaxLength(password, MAX_PASSWORD_LENGTH)) {
+            return res.status(400).json({ message: 'Credenciales con largo invalido.' });
+        }
+
+        const loginRateLimit = getLoginRateLimitState(req, username);
+        if (loginRateLimit.blocked) {
+            return res.status(429).json({
+                message: `Demasiados intentos fallidos. Intenta nuevamente en ${loginRateLimit.retryAfterSeconds} segundos.`,
+                code: 'LOGIN_RATE_LIMIT'
+            });
+        }
+
+        await cleanupExpiredSessionsIfNeeded();
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    id AS user_id,
+                    username,
+                    nombre,
+                    sucursal,
+                    role,
+                    must_change_password,
+                    password_salt,
+                    password_hash,
+                    activo
+                FROM usuarios
+                WHERE username = ?
+                LIMIT 1
+            `,
+            [username]
+        );
+
+        if (!rows.length || Number(rows[0].activo) !== 1) {
+            registerFailedLoginAttempt(req, username);
+            return res.status(401).json({ message: 'Usuario o contrasena incorrectos.' });
+        }
+
+        if (!verifyPassword(password, rows[0].password_salt, rows[0].password_hash)) {
+            registerFailedLoginAttempt(req, username);
+            return res.status(401).json({ message: 'Usuario o contrasena incorrectos.' });
+        }
+
+        clearFailedLoginAttempts(req, username);
+
+        const token = generateSessionToken();
+        await pool.execute(
+            `
+                INSERT INTO sesiones (user_id, token_hash, expires_at, last_used_at)
+                VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), NOW())
+            `,
+            [rows[0].user_id, hashToken(token), AUTH_SESSION_HOURS]
+        );
+
+        setSessionCookie(res, token);
+        console.info(`[Auth] Sesion iniciada por ${rows[0].username}. IP=${getClientIp(req)}`);
+
+        return res.json({
+            token,
+            expiresInHours: AUTH_SESSION_HOURS,
+            user: formatAuthUser(rows[0])
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible iniciar sesion.' });
+    }
+});
+
+app.post('/api/auth/guest', async (req, res) => {
+    try {
+        await cleanupExpiredSessionsIfNeeded();
+        const guestUser = await ensureGuestUserAccount();
+
+        if (Number(guestUser.activo) !== 1) {
+            clearSessionCookie(res);
+            return res.status(403).json({ message: 'La cuenta de invitado esta deshabilitada por el administrador.' });
+        }
+
+        const token = generateSessionToken();
+        await pool.execute(
+            `
+                INSERT INTO sesiones (user_id, token_hash, expires_at, last_used_at)
+                VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), NOW())
+            `,
+            [guestUser.user_id, hashToken(token), AUTH_SESSION_HOURS]
+        );
+
+        setSessionCookie(res, token);
+        console.info(`[Auth] Sesion invitado iniciada por ${guestUser.username}. IP=${getClientIp(req)}`);
+
+        return res.json({
+            token,
+            expiresInHours: AUTH_SESSION_HOURS,
+            user: formatAuthUser(guestUser)
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible iniciar sesion como invitado.' });
+    }
+});
+
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+    return res.json({ user: req.authUser });
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+    try {
+        await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE id = ?', [req.authSessionId]);
+        clearSessionCookie(res);
+        console.info(
+            `[Auth] Sesion cerrada manualmente por ${normalizeText(req.authUser?.username || req.authUser?.nombre || 'desconocido')}. IP=${getClientIp(req)}`
+        );
+        return res.json({ message: 'Sesion cerrada correctamente.' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cerrar la sesion.' });
+    }
+});
+
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+    try {
+        const currentPassword = String(req.body.currentPassword || '');
+        const newPassword = String(req.body.newPassword || '');
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ message: 'Debes ingresar clave actual y nueva clave.' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: 'La nueva clave debe tener al menos 6 caracteres.' });
+        }
+
+        if (exceedsMaxLength(currentPassword, MAX_PASSWORD_LENGTH) || exceedsMaxLength(newPassword, MAX_PASSWORD_LENGTH)) {
+            return res.status(400).json({ message: `La clave no puede exceder ${MAX_PASSWORD_LENGTH} caracteres.` });
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    id AS user_id,
+                    username,
+                    nombre,
+                    sucursal,
+                    role,
+                    must_change_password,
+                    password_salt,
+                    password_hash,
+                    activo
+                FROM usuarios
+                WHERE id = ?
+                LIMIT 1
+            `,
+            [req.authUser.id]
+        );
+
+        if (!rows.length || Number(rows[0].activo) !== 1) {
+            return res.status(401).json({ message: 'Usuario no disponible para cambiar clave.' });
+        }
+
+        if (!verifyPassword(currentPassword, rows[0].password_salt, rows[0].password_hash)) {
+            return res.status(401).json({ message: 'La clave actual es incorrecta.' });
+        }
+
+        const newPasswordData = createPasswordHash(newPassword);
+        await pool.execute(
+            `
+                UPDATE usuarios
+                SET password_salt = ?, password_hash = ?, must_change_password = 0, updated_at = NOW()
+                WHERE id = ?
+            `,
+            [newPasswordData.salt, newPasswordData.hash, req.authUser.id]
+        );
+
+        await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ? AND id <> ?', [
+            req.authUser.id,
+            req.authSessionId
+        ]);
+
+        const updatedUser = {
+            ...rows[0],
+            password_salt: newPasswordData.salt,
+            password_hash: newPasswordData.hash,
+            must_change_password: 0
+        };
+
+        return res.json({
+            message: 'Clave actualizada correctamente.',
+            user: formatAuthUser(updatedUser)
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar la clave.' });
+    }
+});
+
+app.use('/api', requireAuth);
+app.use('/api', requirePasswordChangeCompleted);
+
+app.get('/api/utm/mes-actual', async (req, res) => {
+    try {
+        if (!canUseSecretaryFeatures(req.authUser)) {
+            return res.status(403).json({ message: 'Solo secretaria o superusuario pueden consultar la UTM mensual.' });
+        }
+
+        const status = await getCurrentMonthUtmStatus();
+        return res.json(status);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible consultar la UTM mensual.' });
+    }
+});
+
+app.post('/api/utm/mes-actual', async (req, res) => {
+    try {
+        if (!canUseSecretaryFeatures(req.authUser)) {
+            return res.status(403).json({ message: 'Solo secretaria o superusuario pueden registrar la UTM mensual.' });
+        }
+
+        const parsedValue = parseUtmValue(req.body?.valor);
+        const parsedConfirmation = parseUtmValue(req.body?.confirmacion);
+        if (!parsedValue.isValid || parsedValue.value === null || !parsedConfirmation.isValid || parsedConfirmation.value === null) {
+            return res.status(400).json({ message: 'Ingresa y confirma un valor UTM valido mayor a 0.' });
+        }
+
+        if (Number(parsedValue.value.toFixed(2)) !== Number(parsedConfirmation.value.toFixed(2))) {
+            return res.status(400).json({ message: 'El monto UTM y su confirmacion no coinciden.' });
+        }
+
+        const period = getCurrentCalendarPeriod();
+        const userId = Number(req.authUser?.id);
+        const registeredById = Number.isInteger(userId) && userId > 0 ? userId : null;
+        const registeredByName = normalizeText(req.authUser?.nombre || req.authUser?.username || '');
+
+        await pool.execute(
+            `
+                INSERT INTO utm_mensual (
+                    anio,
+                    mes,
+                    valor,
+                    registrado_por_id,
+                    registrado_por_nombre
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    valor = VALUES(valor),
+                    registrado_por_id = VALUES(registrado_por_id),
+                    registrado_por_nombre = VALUES(registrado_por_nombre),
+                    updated_at = CURRENT_TIMESTAMP
+            `,
+            [period.anio, period.mes, parsedValue.value, registeredById, registeredByName]
+        );
+
+        const status = await getCurrentMonthUtmStatus();
+        return res.json({
+            message: 'UTM mensual guardada correctamente.',
+            status
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible guardar la UTM mensual.' });
+    }
+});
+
+app.get('/api/cotizaciones/resumen', async (req, res) => {
+    try {
+        if (!canUseSecretaryFeatures(req.authUser)) {
+            return res.status(403).json({ message: 'Solo secretaria o superusuario pueden preparar cotizaciones.' });
+        }
+
+        const summaryResult = await buildCurrentCotizacionSummary();
+        if (!summaryResult.ok) {
+            return res.status(409).json({
+                message: 'Debes registrar la UTM mensual antes de preparar una cotizacion.',
+                status: summaryResult.status || null
+            });
+        }
+
+        return res.json(summaryResult.summary);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible preparar el resumen de cotizacion.' });
+    }
+});
+
+app.post('/api/cotizaciones/enviar', async (req, res) => {
+    try {
+        if (!canUseSecretaryFeatures(req.authUser)) {
+            return res.status(403).json({ message: 'Solo secretaria o superusuario pueden enviar cotizaciones.' });
+        }
+
+        const smtpResolution = await resolveActiveSmtpConfiguration();
+        if (!smtpResolution.config) {
+            return res.status(503).json({
+                message:
+                    'Envio no disponible: configura el servicio de correo (SMTP) en el menu del superusuario o variables de entorno.'
+            });
+        }
+
+        const destinationEmail = normalizeText(req.body?.destinationEmail).toLowerCase();
+        const clientName = normalizeText(req.body?.clientName || req.body?.nombreCliente);
+        const referenciaCliente = normalizeText(req.body?.referenciaCliente);
+        if (!clientName) {
+            return res.status(400).json({ message: 'Debes indicar el nombre del cliente.' });
+        }
+        if (!destinationEmail) {
+            return res.status(400).json({ message: 'Debes indicar el correo del cliente.' });
+        }
+        if (exceedsMaxLength(clientName, 120)) {
+            return res.status(400).json({ message: 'El nombre del cliente excede el maximo permitido de 120 caracteres.' });
+        }
+        if (!isValidEmail(destinationEmail)) {
+            return res.status(400).json({ message: 'El correo del cliente no es valido.' });
+        }
+        if (exceedsMaxLength(destinationEmail, 255)) {
+            return res.status(400).json({ message: 'El correo del cliente excede el maximo permitido de 255 caracteres.' });
+        }
+        if (referenciaCliente && exceedsMaxLength(referenciaCliente, 500)) {
+            return res.status(400).json({ message: 'La referencia personalizada excede el maximo permitido de 500 caracteres.' });
+        }
+
+        const summaryResult = await buildCurrentCotizacionSummary();
+        if (!summaryResult.ok) {
+            return res.status(409).json({
+                message: 'Debes registrar la UTM mensual antes de enviar la cotizacion.',
+                status: summaryResult.status || null
+            });
+        }
+
+        const summary = summaryResult.summary;
+        if (!Array.isArray(summary?.servicios) || summary.servicios.length === 0) {
+            return res.status(409).json({
+                message: 'No hay servicios estandar activos para generar la cotizacion.'
+            });
+        }
+
+        const attachmentBuffer = await buildCotizacionTemplatePdfBuffer(summary);
+        const periodLabel = formatMonthlyPeriodLabel(summary?.periodo?.anio, summary?.periodo?.mes);
+        const subject = `Cotizacion Geo Rural ${periodLabel}`;
+        const transporter = getSmtpTransporter(smtpResolution.config);
+        if (!transporter) {
+            return res.status(503).json({
+                message: 'Envio no disponible: no fue posible inicializar configuracion SMTP.'
+            });
+        }
+
+        const fromAddress = buildSmtpFromAddress(smtpResolution.config);
+        await transporter.sendMail({
+            from: fromAddress,
+            to: destinationEmail,
+            subject,
+            text: buildCotizacionEmailText(summary, clientName, referenciaCliente, req.authUser),
+            attachments: [
+                {
+                    filename: buildCotizacionAttachmentFileName(summary),
+                    content: attachmentBuffer,
+                    contentType: 'application/pdf'
+                }
+            ]
+        });
+
+        return res.json({
+            message: `Cotizacion enviada correctamente a ${destinationEmail}.`,
+            destinationEmail,
+            subject
+        });
+    } catch (error) {
+        console.error('Error enviando cotizacion por correo:', error);
+        return res.status(500).json({ message: 'No fue posible enviar la cotizacion por correo.' });
+    }
+});
+
+app.get('/api/facturas/solicitudes', async (req, res) => {
+    try {
+        const estadoQuery = normalizeText(req.query.estado).toUpperCase();
+        const limitRaw = Number(req.query.limit || 300);
+        const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 300;
+        const estado =
+            !estadoQuery || estadoQuery === 'TODAS' || estadoQuery === 'TODOS' || estadoQuery === 'ALL'
+                ? ''
+                : normalizeFacturaSolicitudEstado(estadoQuery);
+
+        if (estadoQuery && !estado && !['TODAS', 'TODOS', 'ALL'].includes(estadoQuery)) {
+            return res.status(400).json({ message: 'Estado invalido para buscar solicitudes. Usa PENDIENTE, ENVIADA o ANULADA.' });
+        }
+
+        const accessScope = getFacturaSolicitudAccessScope(req.authUser, 's');
+        if (accessScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para consultar solicitudes.' });
+        }
+
+        const where = [];
+        const values = [];
+        if (estado) {
+            where.push('s.estado = ?');
+            values.push(estado);
+        }
+        if (accessScope.clause) {
+            where.push(accessScope.clause);
+            values.push(...accessScope.params);
+        }
+
+        const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    s.id,
+                    s.num_ingreso,
+                    s.nombre_razon_social,
+                    s.rut,
+                    s.giro,
+                    s.direccion,
+                    s.comuna,
+                    s.ciudad,
+                    s.contacto,
+                    s.observacion,
+                    s.monto_facturar,
+                    s.destino_email,
+                    s.estado,
+                    s.created_by,
+                    s.created_by_sucursal,
+                    s.sent_at,
+                    s.created_at
+                FROM factura_solicitudes s
+                ${whereSql}
+                ORDER BY s.created_at DESC, s.id DESC
+                LIMIT ${limit}
+            `,
+            values
+        );
+
+        const solicitudes = rows.map(toFacturaSolicitudRow);
+        return res.json({ solicitudes });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible listar las solicitudes de factura.' });
+    }
+});
+
+app.get('/api/facturas/solicitudes/por-ingreso/:numIngreso', async (req, res) => {
+    try {
+        const numIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+        if (!parseNumIngreso(numIngreso)) {
+            return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+        }
+
+        const accessScope = getFacturaSolicitudAccessScope(req.authUser, 's');
+        if (accessScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para consultar solicitudes.' });
+        }
+
+        const scopeWhere = accessScope.clause ? ` AND ${accessScope.clause}` : '';
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    s.id,
+                    s.num_ingreso,
+                    s.nombre_razon_social,
+                    s.rut,
+                    s.giro,
+                    s.direccion,
+                    s.comuna,
+                    s.ciudad,
+                    s.contacto,
+                    s.observacion,
+                    s.monto_facturar,
+                    s.destino_email,
+                    s.estado,
+                    s.created_by,
+                    s.created_by_sucursal,
+                    s.sent_at,
+                    s.created_at
+                FROM factura_solicitudes s
+                WHERE s.num_ingreso = ?${scopeWhere}
+                ORDER BY
+                    (s.estado = ?) DESC,
+                    COALESCE(s.sent_at, s.updated_at, s.created_at) DESC,
+                    s.id DESC
+                LIMIT 1
+            `,
+            [numIngreso, ...accessScope.params, FACTURA_SOLICITUD_ESTADO_ENVIADA]
+        );
+
+        if (!rows.length) {
+            return res.json({ solicitud: null });
+        }
+
+        return res.json({ solicitud: toFacturaSolicitudRow(rows[0]) });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible consultar la solicitud de factura.' });
+    }
+});
+
+app.post('/api/facturas/solicitudes', requireWriteAccess, async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        const parsed = parseFacturaSolicitudPayload(req.body);
+        if (!parsed.isValid) {
+            return res.status(400).json({ message: parsed.message });
+        }
+
+        const payload = parsed.payload;
+        const userName = req.authUser.nombre || req.authUser.username;
+        const userBranch = normalizeText(req.authUser.sucursal) || null;
+        const canManageManualStatus = isSuperUser(req.authUser);
+        const accessScope = getFacturaSolicitudAccessScope(req.authUser);
+        const registroScope = getRegistroAccessScope(req.authUser);
+
+        if (accessScope.denied || (!hasBackofficeRegistroAccess(req.authUser) && !userBranch)) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para registrar solicitudes.' });
+        }
+        if (!canManageManualStatus && payload.estado === FACTURA_SOLICITUD_ESTADO_ANULADA) {
+            return res.status(403).json({ message: 'Solo el superusuario puede marcar solicitudes como ANULADA.' });
+        }
+
+        await connection.beginTransaction();
+        const syncFacturaDataIntoRegistro = async () => {
+            if (registroScope.denied) {
+                return;
+            }
+
+            const registroScopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+            await connection.execute(
+                `
+                    UPDATE registros
+                    SET
+                        factura_nombre_razon = ?,
+                        factura_rut = ?,
+                        factura_giro = ?,
+                        factura_direccion = ?,
+                        factura_comuna = ?,
+                        factura_ciudad = ?,
+                        factura_contacto = ?,
+                        factura_observacion = ?,
+                        factura_monto = ?,
+                        updated_by = ?,
+                        updated_by_sucursal = ?,
+                        updated_at = NOW()
+                    WHERE num_ingreso = ?${registroScopeWhere}
+                `,
+                [
+                    payload.nombreRazonSocial,
+                    payload.rut,
+                    payload.giro || null,
+                    payload.direccion || null,
+                    payload.comuna || null,
+                    payload.ciudad || null,
+                    payload.contacto || null,
+                    payload.observacion || null,
+                    payload.montoFacturar,
+                    userName,
+                    userBranch,
+                    payload.numIngreso,
+                    ...registroScope.params
+                ]
+            );
+        };
+
+        const scopeWhere = accessScope.clause ? ` AND ${accessScope.clause}` : '';
+        const [existingRows] = await connection.execute(
+            `
+                SELECT
+                    id,
+                    estado,
+                    destino_email,
+                    sent_at
+                FROM factura_solicitudes
+                WHERE num_ingreso = ?${scopeWhere}
+                LIMIT 1
+                FOR UPDATE
+            `,
+            [payload.numIngreso, ...accessScope.params]
+        );
+
+        if (!existingRows.length) {
+            const [insertResult] = await connection.execute(
+                `
+                    INSERT INTO factura_solicitudes (
+                        num_ingreso,
+                        nombre_razon_social,
+                        rut,
+                        giro,
+                        direccion,
+                        comuna,
+                        ciudad,
+                        contacto,
+                        observacion,
+                        monto_facturar,
+                        destino_email,
+                        estado,
+                        created_by,
+                        created_by_sucursal,
+                        updated_by,
+                        updated_by_sucursal,
+                        sent_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `,
+                [
+                    payload.numIngreso,
+                    payload.nombreRazonSocial,
+                    payload.rut,
+                    payload.giro || null,
+                    payload.direccion || null,
+                    payload.comuna || null,
+                    payload.ciudad || null,
+                    payload.contacto || null,
+                    payload.observacion || null,
+                    payload.montoFacturar,
+                    payload.destinationEmail || null,
+                    payload.estado,
+                    userName,
+                    userBranch,
+                    userName,
+                    userBranch,
+                    payload.estado === FACTURA_SOLICITUD_ESTADO_ENVIADA ? new Date() : null
+                ]
+            );
+
+            await syncFacturaDataIntoRegistro();
+            await connection.commit();
+            return res.status(201).json({
+                message: payload.estado === FACTURA_SOLICITUD_ESTADO_ENVIADA
+                    ? 'Solicitud registrada como ENVIADA.'
+                    : payload.estado === FACTURA_SOLICITUD_ESTADO_ANULADA
+                      ? 'Solicitud registrada como ANULADA.'
+                      : 'Solicitud registrada como PENDIENTE.',
+                solicitudId: insertResult.insertId,
+                estado: payload.estado
+            });
+        }
+
+        const existingStatus = normalizeFacturaSolicitudEstado(existingRows[0].estado) || FACTURA_SOLICITUD_ESTADO_PENDIENTE;
+        const blockDowngradeToPending =
+            !canManageManualStatus &&
+            existingStatus === FACTURA_SOLICITUD_ESTADO_ENVIADA &&
+            payload.estado === FACTURA_SOLICITUD_ESTADO_PENDIENTE;
+        const nextStatus = blockDowngradeToPending ? FACTURA_SOLICITUD_ESTADO_ENVIADA : payload.estado;
+        const fallbackDestinationEmail = normalizeText(existingRows[0].destino_email).toLowerCase();
+        const nextDestinationEmail =
+            nextStatus === FACTURA_SOLICITUD_ESTADO_ENVIADA
+                ? payload.destinationEmail || fallbackDestinationEmail || null
+                : null;
+        const existingSentAt = existingRows[0].sent_at ? new Date(existingRows[0].sent_at) : null;
+        const nextSentAt = nextStatus === FACTURA_SOLICITUD_ESTADO_ENVIADA ? existingSentAt || new Date() : null;
+
+        await connection.execute(
+            `
+                UPDATE factura_solicitudes
+                SET
+                    nombre_razon_social = ?,
+                    rut = ?,
+                    giro = ?,
+                    direccion = ?,
+                    comuna = ?,
+                    ciudad = ?,
+                    contacto = ?,
+                    observacion = ?,
+                    monto_facturar = ?,
+                    destino_email = ?,
+                    estado = ?,
+                    updated_by = ?,
+                    updated_by_sucursal = ?,
+                    sent_at = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            `,
+            [
+                payload.nombreRazonSocial,
+                payload.rut,
+                payload.giro || null,
+                payload.direccion || null,
+                payload.comuna || null,
+                payload.ciudad || null,
+                payload.contacto || null,
+                payload.observacion || null,
+                payload.montoFacturar,
+                nextDestinationEmail,
+                nextStatus,
+                userName,
+                userBranch,
+                nextSentAt,
+                existingRows[0].id
+            ]
+        );
+
+        await syncFacturaDataIntoRegistro();
+        await connection.commit();
+        return res.json({
+            message: blockDowngradeToPending
+                ? 'La factura ya estaba ENVIADA. Se actualizaron sus datos sin cambiar el estado.'
+                : nextStatus === FACTURA_SOLICITUD_ESTADO_ENVIADA
+                  ? 'Solicitud actualizada en estado ENVIADA.'
+                  : nextStatus === FACTURA_SOLICITUD_ESTADO_ANULADA
+                    ? 'Solicitud actualizada en estado ANULADA.'
+                    : 'Solicitud actualizada en estado PENDIENTE.',
+            solicitudId: existingRows[0].id,
+            estado: nextStatus
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'La solicitud de esta factura ya existe. Vuelve a cargar el estado.' });
+        }
+        return res.status(500).json({ message: 'No fue posible registrar la solicitud de factura.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.post('/api/facturas/solicitudes/marcar-enviadas', requireWriteAccess, async (req, res) => {
+    try {
+        const destinationEmail = normalizeText(req.body.destinationEmail).toLowerCase();
+        if (!destinationEmail) {
+            return res.status(400).json({ message: 'Debes ingresar el correo del contador.' });
+        }
+        if (!isValidEmail(destinationEmail)) {
+            return res.status(400).json({ message: 'El correo del contador no es valido.' });
+        }
+        if (exceedsMaxLength(destinationEmail, 255)) {
+            return res.status(400).json({ message: 'El correo del contador excede el maximo permitido de 255 caracteres.' });
+        }
+
+        const userName = req.authUser.nombre || req.authUser.username;
+        const userBranch = normalizeText(req.authUser.sucursal) || null;
+        if (!hasBackofficeRegistroAccess(req.authUser) && !userBranch) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para enviar pendientes.' });
+        }
+
+        const accessScope = getFacturaSolicitudAccessScope(req.authUser);
+        if (accessScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para enviar pendientes.' });
+        }
+
+        const where = ['estado = ?'];
+        const values = [FACTURA_SOLICITUD_ESTADO_PENDIENTE];
+        if (accessScope.clause) {
+            where.push(accessScope.clause);
+            values.push(...accessScope.params);
+        }
+
+        const [updateResult] = await pool.execute(
+            `
+                UPDATE factura_solicitudes
+                SET
+                    estado = ?,
+                    destino_email = ?,
+                    sent_at = NOW(),
+                    updated_by = ?,
+                    updated_by_sucursal = ?,
+                    updated_at = NOW()
+                WHERE ${where.join(' AND ')}
+            `,
+            [FACTURA_SOLICITUD_ESTADO_ENVIADA, destinationEmail, userName, userBranch, ...values]
+        );
+
+        const updatedCount = Number(updateResult.affectedRows || 0);
+        return res.json({
+            message:
+                updatedCount > 0
+                    ? `Se marcaron ${updatedCount} solicitud(es) como ENVIADA.`
+                    : 'No hay solicitudes pendientes para actualizar.',
+            updatedCount
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar las solicitudes pendientes.' });
+    }
+});
+
+app.get('/api/admin/sucursales', requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `
+                SELECT id, nombre, created_at
+                FROM sucursales
+                ORDER BY nombre ASC
+            `
+        );
+
+        const sucursales = rows.map((row) => ({
+            id: row.id,
+            nombre: row.nombre,
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at)
+        }));
+
+        return res.json({ sucursales });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible listar las sucursales.' });
+    }
+});
+
+app.post('/api/admin/sucursales', requireAdmin, async (req, res) => {
+    try {
+        const nombre = normalizeText(req.body.nombre);
+        if (!nombre) {
+            return res.status(400).json({ message: 'Debes ingresar un nombre de sucursal.' });
+        }
+
+        if (exceedsMaxLength(nombre, 120)) {
+            return res.status(400).json({ message: 'El nombre de sucursal no puede exceder 120 caracteres.' });
+        }
+
+        const [insertResult] = await pool.execute('INSERT INTO sucursales (nombre) VALUES (?)', [nombre]);
+        return res.status(201).json({
+            message: `Sucursal ${nombre} creada correctamente.`,
+            sucursal: {
+                id: insertResult.insertId,
+                nombre
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Esa sucursal ya existe.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible crear la sucursal.' });
+    }
+});
+
+app.put('/api/admin/sucursales/:branchId', requireAdmin, async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        const branchId = Number(req.params.branchId);
+        const nombre = normalizeText(req.body.nombre);
+
+        if (!Number.isInteger(branchId) || branchId <= 0) {
+            return res.status(400).json({ message: 'Identificador de sucursal invalido.' });
+        }
+
+        if (!nombre) {
+            return res.status(400).json({ message: 'Debes ingresar un nombre de sucursal.' });
+        }
+
+        if (exceedsMaxLength(nombre, 120)) {
+            return res.status(400).json({ message: 'El nombre de sucursal no puede exceder 120 caracteres.' });
+        }
+
+        await connection.beginTransaction();
+        const [rows] = await connection.execute('SELECT id, nombre FROM sucursales WHERE id = ? FOR UPDATE', [branchId]);
+        if (!rows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe esa sucursal.' });
+        }
+
+        const previousName = normalizeText(rows[0].nombre);
+        await connection.execute('UPDATE sucursales SET nombre = ?, updated_at = NOW() WHERE id = ?', [nombre, branchId]);
+
+        if (previousName && previousName !== nombre) {
+            await connection.execute('UPDATE usuarios SET sucursal = ? WHERE sucursal = ?', [nombre, previousName]);
+        }
+
+        await connection.commit();
+        return res.json({
+            message: `Sucursal ${nombre} actualizada correctamente.`,
+            sucursal: {
+                id: branchId,
+                nombre
+            }
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Esa sucursal ya existe.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible actualizar la sucursal.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.delete('/api/admin/sucursales/:branchId', requireAdmin, async (req, res) => {
+    try {
+        const branchId = Number(req.params.branchId);
+        if (!Number.isInteger(branchId) || branchId <= 0) {
+            return res.status(400).json({ message: 'Identificador de sucursal invalido.' });
+        }
+
+        const [rows] = await pool.execute('SELECT id, nombre FROM sucursales WHERE id = ? LIMIT 1', [branchId]);
+        if (!rows.length) {
+            return res.status(404).json({ message: 'No existe esa sucursal.' });
+        }
+
+        const branchName = normalizeText(rows[0].nombre);
+        const [assignedRows] = await pool.execute('SELECT COUNT(*) AS total FROM usuarios WHERE sucursal = ?', [branchName]);
+        if (Number(assignedRows[0].total || 0) > 0) {
+            return res.status(400).json({
+                message: 'No se puede eliminar la sucursal porque esta asignada a usuarios activos.'
+            });
+        }
+
+        await pool.execute('DELETE FROM sucursales WHERE id = ?', [branchId]);
+        return res.json({ message: `Sucursal ${branchName} eliminada.` });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible eliminar la sucursal.' });
+    }
+});
+
+app.get('/api/admin/usuarios', requireAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    id,
+                    username,
+                    nombre,
+                    sucursal,
+                    role,
+                    must_change_password,
+                    activo,
+                    created_at
+                FROM usuarios
+                ORDER BY
+                    CASE WHEN LOWER(username) = ? THEN 1 ELSE 0 END ASC,
+                    id ASC
+            `
+            ,
+            [GUEST_USERNAME]
+        );
+
+        const visibleRows = isSuperUser(req.authUser)
+            ? rows
+            : rows.filter((row) => normalizeUserRole(row.role, ROLE_OPERADOR) !== ROLE_SUPER);
+
+        const usuarios = visibleRows.map((row) => {
+            const isGuest = isGuestUsername(row.username);
+            return {
+                id: row.id,
+                username: row.username,
+                nombre: row.nombre,
+                sucursal: row.sucursal,
+                role: isGuest ? 'INVITADO' : normalizeUserRole(row.role, ROLE_OPERADOR),
+                mustChangePassword: Number(row.must_change_password || 0) === 1,
+                activo: Number(row.activo) === 1,
+                isGuest,
+                createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at)
+            };
+        });
+
+        return res.json({ usuarios });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible listar los usuarios.' });
+    }
+});
+
+app.post('/api/admin/usuarios', requireAdmin, async (req, res) => {
+    try {
+        const username = normalizeText(req.body.username).toLowerCase();
+        const nombre = normalizeText(req.body.nombre);
+        const sucursal = normalizeText(req.body.sucursal);
+        const password = String(req.body.password || '');
+        const roleRaw = normalizeText(req.body.role).toUpperCase();
+        const role = normalizeUserRole(roleRaw || ROLE_OPERADOR, ROLE_OPERADOR);
+        const assignableRoles = getAssignableRolesForUser(req.authUser);
+        if (roleRaw && (role !== roleRaw || !assignableRoles.includes(role))) {
+            return res.status(400).json({ message: `ROL invalido. Usa ${formatAssignableRolesLabel(req.authUser)}.` });
+        }
+
+        if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+            return res.status(400).json({ message: 'Usuario invalido. Usa 3-40 caracteres (a-z, 0-9, ., _, -).' });
+        }
+
+        if (!nombre || !sucursal || password.length < 6) {
+            return res.status(400).json({ message: 'Completa nombre, sucursal y contrasena (minimo 6 caracteres).' });
+        }
+
+        if (exceedsMaxLength(nombre, 120) || exceedsMaxLength(sucursal, 120)) {
+            return res.status(400).json({ message: 'Nombre y sucursal no pueden exceder 120 caracteres.' });
+        }
+
+        if (exceedsMaxLength(password, MAX_PASSWORD_LENGTH)) {
+            return res.status(400).json({ message: `La contrasena no puede exceder ${MAX_PASSWORD_LENGTH} caracteres.` });
+        }
+
+        if (!(await branchExists(sucursal))) {
+            return res.status(400).json({ message: 'La sucursal seleccionada no existe o no esta disponible.' });
+        }
+
+        if (role === ROLE_SUPER && (await countSuperUsers()) > 0) {
+            return res.status(400).json({ message: 'Solo se permite una cuenta con rol SUPER en el sistema.' });
+        }
+
+        const mustChangePassword = isPrivilegedRole(role) ? 0 : 1;
+        const passwordData = createPasswordHash(password);
+        const [insertResult] = await pool.execute(
+            `
+                INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password, activo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            `,
+            [username, nombre, sucursal, role, passwordData.salt, passwordData.hash, mustChangePassword]
+        );
+
+        return res.status(201).json({
+            message: `Usuario ${username} creado correctamente.`,
+            usuario: {
+                id: insertResult.insertId,
+                username,
+                nombre,
+                sucursal,
+                role,
+                mustChangePassword: mustChangePassword === 1,
+                activo: true
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Ese usuario ya existe.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible crear el usuario.' });
+    }
+});
+
+app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        const username = normalizeText(req.body.username).toLowerCase();
+        const nombre = normalizeText(req.body.nombre);
+        const sucursal = normalizeText(req.body.sucursal);
+        const roleRaw = normalizeText(req.body.role).toUpperCase();
+        const role = normalizeUserRole(roleRaw || ROLE_OPERADOR, ROLE_OPERADOR);
+        const password = String(req.body.password || '');
+        const assignableRoles = getAssignableRolesForUser(req.authUser);
+
+        if (roleRaw && (role !== roleRaw || !assignableRoles.includes(role))) {
+            return res.status(400).json({ message: `ROL invalido. Usa ${formatAssignableRolesLabel(req.authUser)}.` });
+        }
+
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: 'Identificador de usuario invalido.' });
+        }
+
+        if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+            return res.status(400).json({ message: 'Usuario invalido. Usa 3-40 caracteres (a-z, 0-9, ., _, -).' });
+        }
+
+        if (!nombre || !sucursal) {
+            return res.status(400).json({ message: 'Completa nombre y sucursal.' });
+        }
+
+        if (exceedsMaxLength(nombre, 120) || exceedsMaxLength(sucursal, 120)) {
+            return res.status(400).json({ message: 'Nombre y sucursal no pueden exceder 120 caracteres.' });
+        }
+
+        if (!(await branchExists(sucursal))) {
+            return res.status(400).json({ message: 'La sucursal seleccionada no existe o no esta disponible.' });
+        }
+
+        if (password && password.length < 6) {
+            return res.status(400).json({ message: 'Si envias una contrasena, debe tener al menos 6 caracteres.' });
+        }
+
+        if (password && exceedsMaxLength(password, MAX_PASSWORD_LENGTH)) {
+            return res.status(400).json({ message: `La contrasena no puede exceder ${MAX_PASSWORD_LENGTH} caracteres.` });
+        }
+
+        const [targetRows] = await pool.execute(
+            'SELECT id, username, role, must_change_password, activo FROM usuarios WHERE id = ? LIMIT 1',
+            [userId]
+        );
+        if (!targetRows.length) {
+            return res.status(404).json({ message: 'No existe ese usuario.' });
+        }
+
+        if (isGuestUsername(targetRows[0].username)) {
+            return res
+                .status(400)
+                .json({ message: 'La cuenta invitado no se edita aqui. Usa su checkbox para habilitarla o deshabilitarla.' });
+        }
+
+        const targetUsername = normalizeText(targetRows[0].username).toLowerCase();
+        if (targetUsername === SUPERUSER_USERNAME) {
+            if (username !== SUPERUSER_USERNAME) {
+                return res.status(400).json({ message: 'La cuenta SUPER principal no puede cambiar su usuario.' });
+            }
+            if (role !== ROLE_SUPER) {
+                return res.status(400).json({ message: 'La cuenta SUPER principal no puede perder su rol SUPER.' });
+            }
+        }
+
+        const currentRole = normalizeUserRole(targetRows[0].role, ROLE_OPERADOR);
+        if (currentRole === ROLE_SUPER && !isSuperUser(req.authUser)) {
+            return res.status(403).json({ message: 'Solo el superusuario puede editar otra cuenta SUPER.' });
+        }
+
+        if (role === ROLE_SUPER && !isSuperUser(req.authUser)) {
+            return res.status(403).json({ message: 'Solo el superusuario puede asignar el rol SUPER.' });
+        }
+
+        if (role === ROLE_SUPER && currentRole !== ROLE_SUPER && (await countSuperUsers(userId)) > 0) {
+            return res.status(400).json({ message: 'Solo se permite una cuenta con rol SUPER en el sistema.' });
+        }
+
+        const targetIsActive = Number(targetRows[0].activo || 0) === 1;
+        if (targetIsActive && isPrivilegedRole(currentRole) && !isPrivilegedRole(role)) {
+            if ((await countActivePrivilegedUsers()) <= 1) {
+                return res.status(400).json({ message: 'Debe existir al menos un usuario ADMIN o SUPER activo.' });
+            }
+        }
+
+        let mustChangePassword = Number(targetRows[0].must_change_password || 0) === 1;
+        if (isPrivilegedRole(role)) {
+            mustChangePassword = false;
+        }
+
+        if (password) {
+            const passwordData = createPasswordHash(password);
+            mustChangePassword = isPrivilegedRole(role) ? false : true;
+            await pool.execute(
+                `
+                    UPDATE usuarios
+                    SET
+                        username = ?,
+                        nombre = ?,
+                        sucursal = ?,
+                        role = ?,
+                        password_salt = ?,
+                        password_hash = ?,
+                        must_change_password = ?,
+                        updated_at = NOW()
+                    WHERE id = ?
+                `,
+                [username, nombre, sucursal, role, passwordData.salt, passwordData.hash, mustChangePassword ? 1 : 0, userId]
+            );
+
+            if (userId === req.authUser.id) {
+                await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ? AND id <> ?', [
+                    userId,
+                    req.authSessionId
+                ]);
+            } else {
+                await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ?', [userId]);
+            }
+        } else {
+            if (isPrivilegedRole(role)) {
+                await pool.execute(
+                    `
+                        UPDATE usuarios
+                        SET username = ?, nombre = ?, sucursal = ?, role = ?, must_change_password = 0, updated_at = NOW()
+                        WHERE id = ?
+                    `,
+                    [username, nombre, sucursal, role, userId]
+                );
+            } else {
+                await pool.execute(
+                    `
+                        UPDATE usuarios
+                        SET username = ?, nombre = ?, sucursal = ?, role = ?, updated_at = NOW()
+                        WHERE id = ?
+                    `,
+                    [username, nombre, sucursal, role, userId]
+                );
+            }
+        }
+
+        return res.json({
+            message: `Usuario ${username} actualizado correctamente.`,
+            usuario: {
+                id: userId,
+                username,
+                nombre,
+                sucursal,
+                role,
+                mustChangePassword
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Ese usuario ya existe.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible actualizar el usuario.' });
+    }
+});
+
+app.post('/api/admin/usuarios/:userId/guest-status', requireAdmin, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: 'Identificador de usuario invalido.' });
+        }
+
+        const activeRaw = req.body && req.body.activo;
+        if (typeof activeRaw !== 'boolean') {
+            return res.status(400).json({ message: 'Debes indicar el estado activo como true o false.' });
+        }
+
+        const [targetRows] = await pool.execute('SELECT id, username, activo FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+        if (!targetRows.length) {
+            return res.status(404).json({ message: 'No existe ese usuario.' });
+        }
+
+        if (!isGuestUsername(targetRows[0].username)) {
+            return res.status(400).json({ message: 'Solo se puede cambiar estado de la cuenta invitado.' });
+        }
+
+        const activeValue = activeRaw ? 1 : 0;
+        await pool.execute('UPDATE usuarios SET activo = ?, updated_at = NOW() WHERE id = ?', [activeValue, userId]);
+
+        if (!activeRaw) {
+            await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ?', [userId]);
+        }
+
+        return res.json({
+            message: activeRaw
+                ? 'Cuenta invitado habilitada correctamente.'
+                : 'Cuenta invitado deshabilitada correctamente.',
+            usuario: {
+                id: userId,
+                username: targetRows[0].username,
+                activo: activeRaw,
+                isGuest: true
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar el estado de la cuenta invitado.' });
+    }
+});
+
+app.post('/api/admin/usuarios/:userId/reset-password', requireAdmin, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        const newPassword = String(req.body.newPassword || '');
+
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: 'Identificador de usuario invalido.' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: 'La clave temporal debe tener al menos 6 caracteres.' });
+        }
+
+        if (exceedsMaxLength(newPassword, MAX_PASSWORD_LENGTH)) {
+            return res.status(400).json({ message: `La clave no puede exceder ${MAX_PASSWORD_LENGTH} caracteres.` });
+        }
+
+        const [targetRows] = await pool.execute('SELECT id, username, role, activo FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+        if (!targetRows.length) {
+            return res.status(404).json({ message: 'No existe ese usuario.' });
+        }
+
+        if (isGuestUsername(targetRows[0].username)) {
+            return res
+                .status(400)
+                .json({ message: 'La cuenta invitado no usa reseteo de clave manual. Solo habilitala o deshabilitala.' });
+        }
+
+        const targetRole = normalizeUserRole(targetRows[0].role, ROLE_OPERADOR);
+        if (targetRole === ROLE_SUPER && !isSuperUser(req.authUser)) {
+            return res.status(403).json({ message: 'Solo el superusuario puede restablecer la clave de una cuenta SUPER.' });
+        }
+
+        const mustChangePassword = isPrivilegedRole(targetRole) ? 0 : 1;
+        const passwordData = createPasswordHash(newPassword);
+        await pool.execute(
+            `
+                UPDATE usuarios
+                SET password_salt = ?, password_hash = ?, must_change_password = ?, activo = 1, updated_at = NOW()
+                WHERE id = ?
+            `,
+            [passwordData.salt, passwordData.hash, mustChangePassword, userId]
+        );
+
+        await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ?', [userId]);
+
+        const message =
+            isPrivilegedRole(targetRole)
+                ? `Clave de cuenta privilegiada actualizada para ${targetRows[0].username}.`
+                : `Clave temporal restablecida para ${targetRows[0].username}. Debe cambiarla al ingresar.`;
+
+        return res.json({
+            message
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible restablecer la clave.' });
+    }
+});
+
+app.delete('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ message: 'Identificador de usuario invalido.' });
+        }
+
+        if (userId === req.authUser.id) {
+            return res.status(400).json({ message: 'No puedes eliminar tu propio usuario.' });
+        }
+
+        const [targetRows] = await pool.execute('SELECT id, username, role FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+        if (!targetRows.length) {
+            return res.status(404).json({ message: 'No existe ese usuario.' });
+        }
+
+        if (isGuestUsername(targetRows[0].username)) {
+            return res
+                .status(400)
+                .json({ message: 'La cuenta invitado no se elimina. Usa su checkbox para habilitarla o deshabilitarla.' });
+        }
+
+        if (normalizeText(targetRows[0].username).toLowerCase() === SUPERUSER_USERNAME) {
+            return res.status(400).json({ message: 'La cuenta SUPER principal no se puede eliminar.' });
+        }
+
+        const targetRole = normalizeUserRole(targetRows[0].role, ROLE_OPERADOR);
+        if (targetRole === ROLE_SUPER && !isSuperUser(req.authUser)) {
+            return res.status(403).json({ message: 'Solo el superusuario puede eliminar una cuenta SUPER.' });
+        }
+
+        const targetIsActive = Number(targetRows[0].activo || 0) === 1;
+        if (targetIsActive && isPrivilegedRole(targetRole)) {
+            if ((await countActivePrivilegedUsers()) <= 1) {
+                return res.status(400).json({ message: 'Debe existir al menos un usuario ADMIN o SUPER activo.' });
+            }
+        }
+
+        await pool.execute('DELETE FROM usuarios WHERE id = ?', [userId]);
+        return res.json({ message: `Usuario ${targetRows[0].username} eliminado.` });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible eliminar el usuario.' });
+    }
+});
+
+app.get('/api/admin/correo-config', requireSuper, async (req, res) => {
+    try {
+        const activeConfigResult = await resolveActiveSmtpConfiguration();
+        const storedRow = activeConfigResult.storedRow;
+        const hasStoredConfig = Boolean(storedRow);
+        const editableConfig = hasStoredConfig
+            ? toSmtpPublicConfig(storedRow)
+            : activeConfigResult.source === 'ENV'
+              ? toSmtpPublicConfig(activeConfigResult.config || SMTP_ENV_CONFIG)
+              : toSmtpPublicConfig({});
+
+        const updatedAtRaw = storedRow?.updated_at || null;
+        const updatedAtIso =
+            updatedAtRaw instanceof Date
+                ? updatedAtRaw.toISOString()
+                : normalizeText(updatedAtRaw || '');
+
+        return res.json({
+            source: activeConfigResult.source,
+            hasStoredConfig,
+            isReady: Boolean(activeConfigResult.config),
+            config: editableConfig,
+            updatedAt: updatedAtIso,
+            updatedBy: normalizeText(storedRow?.updated_by_nombre || '')
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar la configuracion de correo.' });
+    }
+});
+
+app.put('/api/admin/correo-config', requireSuper, async (req, res) => {
+    try {
+        const smtpHost = normalizeText(req.body?.smtpHost ?? req.body?.host);
+        const smtpPort = parsePositiveInt(req.body?.smtpPort ?? req.body?.port, 0);
+        const smtpSecure = parseBooleanFlag(req.body?.smtpSecure ?? req.body?.secure, false);
+        const smtpUser = normalizeText(req.body?.smtpUser ?? req.body?.user);
+        const smtpFromEmail = normalizeText(req.body?.smtpFromEmail ?? req.body?.fromEmail ?? smtpUser).toLowerCase();
+        const smtpFromName = normalizeText(req.body?.smtpFromName ?? req.body?.fromName) || 'Geo Rural';
+        const providedPassword = String(req.body?.smtpPassword ?? req.body?.password ?? '');
+        const keepPassword = parseBooleanFlag(req.body?.keepPassword, true);
+
+        if (!smtpHost) {
+            return res.status(400).json({ message: 'Debes ingresar el servidor SMTP (host).' });
+        }
+        if (exceedsMaxLength(smtpHost, 255)) {
+            return res.status(400).json({ message: 'El servidor SMTP no puede exceder 255 caracteres.' });
+        }
+        if (!smtpPort || smtpPort > 65535) {
+            return res.status(400).json({ message: 'Debes ingresar un puerto SMTP valido (1-65535).' });
+        }
+        if (exceedsMaxLength(smtpUser, 255)) {
+            return res.status(400).json({ message: 'El usuario SMTP no puede exceder 255 caracteres.' });
+        }
+        if (!smtpFromEmail) {
+            return res.status(400).json({ message: 'Debes ingresar un correo remitente.' });
+        }
+        if (!isValidEmail(smtpFromEmail)) {
+            return res.status(400).json({ message: 'El correo remitente no es valido.' });
+        }
+        if (exceedsMaxLength(smtpFromEmail, 255)) {
+            return res.status(400).json({ message: 'El correo remitente no puede exceder 255 caracteres.' });
+        }
+        if (exceedsMaxLength(smtpFromName, 120)) {
+            return res.status(400).json({ message: 'El nombre remitente no puede exceder 120 caracteres.' });
+        }
+        if (providedPassword && exceedsMaxLength(providedPassword, 255)) {
+            return res.status(400).json({ message: 'La clave SMTP no puede exceder 255 caracteres.' });
+        }
+
+        const existingRow = await getStoredCorreoConfigurationRow();
+        let smtpPassword = '';
+        if (providedPassword) {
+            smtpPassword = providedPassword;
+        } else if (keepPassword) {
+            smtpPassword = String(existingRow?.smtp_password || '');
+        }
+
+        const updatedById = Number(req.authUser?.id);
+        const updatedByName = normalizeText(req.authUser?.nombre || req.authUser?.username || 'superusuario');
+
+        await pool.execute(
+            `
+                INSERT INTO correo_configuracion (
+                    id,
+                    smtp_host,
+                    smtp_port,
+                    smtp_secure,
+                    smtp_user,
+                    smtp_password,
+                    smtp_from_email,
+                    smtp_from_name,
+                    updated_by_id,
+                    updated_by_nombre
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    smtp_host = VALUES(smtp_host),
+                    smtp_port = VALUES(smtp_port),
+                    smtp_secure = VALUES(smtp_secure),
+                    smtp_user = VALUES(smtp_user),
+                    smtp_password = VALUES(smtp_password),
+                    smtp_from_email = VALUES(smtp_from_email),
+                    smtp_from_name = VALUES(smtp_from_name),
+                    updated_by_id = VALUES(updated_by_id),
+                    updated_by_nombre = VALUES(updated_by_nombre),
+                    updated_at = CURRENT_TIMESTAMP
+            `,
+            [
+                SMTP_CONFIG_SINGLETON_ID,
+                smtpHost,
+                smtpPort,
+                smtpSecure ? 1 : 0,
+                smtpUser || null,
+                smtpPassword || null,
+                smtpFromEmail,
+                smtpFromName,
+                Number.isInteger(updatedById) && updatedById > 0 ? updatedById : null,
+                updatedByName || null
+            ]
+        );
+
+        resetSmtpTransporterCache();
+        const savedRow = await getStoredCorreoConfigurationRow();
+        const savedConfig = toSmtpRuntimeConfig(savedRow || {});
+        const updatedAtRaw = savedRow?.updated_at || null;
+        const updatedAtIso =
+            updatedAtRaw instanceof Date
+                ? updatedAtRaw.toISOString()
+                : normalizeText(updatedAtRaw || '');
+
+        return res.json({
+            message: 'Configuracion de correo guardada correctamente.',
+            source: 'DATABASE',
+            isReady: isSmtpConfigReady(savedConfig),
+            config: toSmtpPublicConfig(savedRow || savedConfig),
+            updatedAt: updatedAtIso,
+            updatedBy: normalizeText(savedRow?.updated_by_nombre || updatedByName)
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible guardar la configuracion de correo.' });
+    }
+});
+
+app.get('/api/admin/sesiones-activas', requireSuper, async (req, res) => {
+    try {
+        const requestedWindowMinutes = parsePositiveInt(req.query?.windowMinutes, ACTIVE_SESSION_WINDOW_MINUTES);
+        const windowMinutes = Math.min(Math.max(requestedWindowMinutes, 5), 180);
+
+        await cleanupExpiredSessionsIfNeeded();
+
+        const [summaryRows] = await pool.execute(
+            `
+                SELECT
+                    COUNT(*) AS sesiones_vigentes,
+                    SUM(
+                        CASE
+                            WHEN COALESCE(s.last_used_at, s.created_at) >= DATE_SUB(NOW(), INTERVAL ? MINUTE) THEN 1
+                            ELSE 0
+                        END
+                    ) AS equipos_activos,
+                    COUNT(
+                        DISTINCT CASE
+                            WHEN COALESCE(s.last_used_at, s.created_at) >= DATE_SUB(NOW(), INTERVAL ? MINUTE) THEN s.user_id
+                            ELSE NULL
+                        END
+                    ) AS usuarios_activos
+                FROM sesiones s
+                INNER JOIN usuarios u ON u.id = s.user_id
+                WHERE s.revoked_at IS NULL
+                  AND s.expires_at > NOW()
+                  AND u.activo = 1
+            `,
+            [windowMinutes, windowMinutes]
+        );
+
+        const [activeRows] = await pool.execute(
+            `
+                SELECT
+                    s.id AS session_id,
+                    u.username,
+                    u.nombre,
+                    u.sucursal,
+                    u.role,
+                    COALESCE(s.last_used_at, s.created_at) AS activity_at,
+                    s.expires_at
+                FROM sesiones s
+                INNER JOIN usuarios u ON u.id = s.user_id
+                WHERE s.revoked_at IS NULL
+                  AND s.expires_at > NOW()
+                  AND u.activo = 1
+                  AND COALESCE(s.last_used_at, s.created_at) >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+                ORDER BY activity_at DESC, s.id DESC
+                LIMIT 100
+            `,
+            [windowMinutes]
+        );
+
+        const summary = summaryRows[0] || {};
+        const toIsoDateTime = (value) => (value instanceof Date ? value.toISOString() : normalizeText(value || ''));
+
+        return res.json({
+            windowMinutes,
+            equiposActivos: Number(summary.equipos_activos || 0),
+            usuariosActivos: Number(summary.usuarios_activos || 0),
+            sesionesVigentes: Number(summary.sesiones_vigentes || 0),
+            actualizadoEn: new Date().toISOString(),
+            equipos: activeRows.map((row) => ({
+                sessionId: Number(row.session_id || 0),
+                username: normalizeText(row.username),
+                nombre: normalizeText(row.nombre),
+                sucursal: normalizeText(row.sucursal),
+                role: normalizeUserRole(row.role, ROLE_OPERADOR),
+                lastActivityAt: toIsoDateTime(row.activity_at),
+                expiresAt: toIsoDateTime(row.expires_at)
+            }))
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible obtener el estado de equipos activos.' });
+    }
+});
+
+app.get('/api/admin/cotizaciones/documento', requireSuper, async (req, res) => {
+    try {
+        const absolutePath = getCotizacionTemplateFileAbsolutePath();
+        if (!fs.existsSync(absolutePath)) {
+            return res.status(404).json({ message: 'No se encontro el documento base de cotizacion.' });
+        }
+
+        const stats = fs.statSync(absolutePath);
+        return res.json({
+            fileName: path.basename(absolutePath),
+            relativePath: COTIZACION_DOCUMENT_PATH,
+            sizeBytes: Number(stats.size || 0),
+            updatedAt: stats.mtime instanceof Date ? stats.mtime.toISOString() : ''
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible consultar el documento base de cotizacion.' });
+    }
+});
+
+app.post('/api/admin/cotizaciones/documento', requireSuper, async (req, res) => {
+    let tempPath = '';
+    try {
+        const maxFileBytes = 10 * 1024 * 1024;
+        const rawFileName = normalizeText(req.body?.fileName);
+        const rawFileBase64 = String(req.body?.fileBase64 || '')
+            .trim()
+            .replace(/^data:application\/pdf;base64,/i, '')
+            .replace(/\s+/g, '');
+
+        if (!rawFileBase64) {
+            return res.status(400).json({ message: 'Debes seleccionar un archivo PDF para actualizar.' });
+        }
+
+        if (rawFileName && !/\.pdf$/i.test(rawFileName)) {
+            return res.status(400).json({ message: 'Solo se permiten archivos PDF (.pdf).' });
+        }
+
+        const fileBuffer = Buffer.from(rawFileBase64, 'base64');
+        if (!fileBuffer.length) {
+            return res.status(400).json({ message: 'No fue posible leer el contenido del PDF seleccionado.' });
+        }
+        if (fileBuffer.length > maxFileBytes) {
+            return res.status(413).json({ message: 'El archivo PDF excede el maximo permitido de 10 MB.' });
+        }
+        if (!isPdfBuffer(fileBuffer)) {
+            return res.status(400).json({ message: 'El archivo seleccionado no corresponde a un PDF valido.' });
+        }
+
+        try {
+            const pdfDoc = await PDFLibDocument.load(fileBuffer);
+            if (pdfDoc.getPageCount() < 1) {
+                return res.status(400).json({ message: 'El PDF seleccionado no contiene paginas.' });
+            }
+        } catch (pdfError) {
+            return res.status(400).json({ message: 'No fue posible validar el archivo PDF seleccionado.' });
+        }
+
+        const targetPath = getCotizacionTemplateFileAbsolutePath();
+        const targetDir = path.dirname(targetPath);
+        if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        tempPath = `${targetPath}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+        fs.writeFileSync(tempPath, fileBuffer);
+        fs.renameSync(tempPath, targetPath);
+        tempPath = '';
+
+        const stats = fs.statSync(targetPath);
+        return res.json({
+            message: `Documento base actualizado correctamente (${path.basename(targetPath)}).`,
+            fileName: path.basename(targetPath),
+            relativePath: COTIZACION_DOCUMENT_PATH,
+            sizeBytes: Number(stats.size || 0),
+            updatedAt: stats.mtime instanceof Date ? stats.mtime.toISOString() : ''
+        });
+    } catch (error) {
+        if (tempPath && fs.existsSync(tempPath)) {
+            try {
+                fs.unlinkSync(tempPath);
+            } catch (cleanupError) {
+                // Sin accion: evitar romper respuesta principal.
+            }
+        }
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar el documento base de cotizacion.' });
+    }
+});
+
+app.get('/api/next-ingreso', async (req, res) => {
+    try {
+        const year = new Date().getFullYear();
+        const [rows] = await pool.execute(
+            'SELECT COALESCE(MAX(correlativo), 0) AS maxCorrelativo FROM registros WHERE anio = ?',
+            [year]
+        );
+
+        const next = Number(rows[0].maxCorrelativo || 0) + 1;
+        res.json({ numIngreso: `${next}-${year}` });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'No fue posible obtener el siguiente numero de ingreso.' });
+    }
+});
+
+app.post('/api/registros', requireWriteAccess, async (req, res) => {
+    const incomingComment = normalizeText(req.body.comentario);
+    const rawRut = normalizeText(req.body.rut);
+    const rawCorreo = normalizeText(req.body.correo).toLowerCase();
+    const rawFactura = req.body && typeof req.body.factura === 'object' && req.body.factura ? req.body.factura : {};
+    const payload = {
+        numIngreso: normalizeText(req.body.numIngreso),
+        nombre: normalizeText(req.body.nombre),
+        rut: rawRut,
+        telefono: normalizeText(req.body.telefono),
+        correo: rawCorreo,
+        region: normalizeText(req.body.region),
+        comuna: normalizeText(req.body.comuna),
+        nombrePredio: normalizeText(req.body.nombrePredio),
+        rol: normalizeText(req.body.rol),
+        numLotesRaw: req.body.numLotes,
+        estado: normalizeEstado(req.body.estado),
+        comentario: incomingComment || DEFAULT_CREATION_COMMENT,
+        documentos: safeJsonArray(req.body.documentos),
+        facturaNombreRazon: normalizeText(rawFactura.nombreRazonSocial),
+        facturaRut: normalizeText(rawFactura.rut),
+        facturaGiro: normalizeText(rawFactura.giro),
+        facturaDireccion: normalizeText(rawFactura.direccion),
+        facturaComuna: normalizeText(rawFactura.comuna),
+        facturaCiudad: normalizeText(rawFactura.ciudad),
+        facturaContacto: normalizeText(rawFactura.contacto),
+        facturaObservacion: normalizeText(rawFactura.observacion),
+        facturaMontoRaw: rawFactura.montoFacturar
+    };
+
+    const createLengthError = validateRegistroPayloadLengths(payload);
+    if (createLengthError) {
+        return res.status(400).json({ message: createLengthError });
+    }
+
+    const parsedFromClient = payload.numIngreso ? parseNumIngreso(payload.numIngreso) : null;
+    if (payload.numIngreso && !parsedFromClient) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido. Usa formato 123-2026.' });
+    }
+
+    if (!payload.nombre || !payload.rut || !payload.region || !payload.comuna || !payload.rol) {
+        return res.status(400).json({ message: 'Faltan campos obligatorios para guardar.' });
+    }
+
+    const formattedRut = normalizeAndFormatRut(payload.rut);
+    if (!formattedRut) {
+        return res.status(400).json({ message: 'RUT invalido. Usa formato 12.345.678-5.' });
+    }
+    payload.rut = formattedRut;
+
+    if (payload.correo && !isValidEmail(payload.correo)) {
+        return res.status(400).json({ message: 'Correo invalido. Usa formato nombre@proveedor.cl.' });
+    }
+
+    const parsedLotes = parseNumLotes(payload.numLotesRaw);
+    if (!parsedLotes.isValid) {
+        return res.status(400).json({ message: 'NRO DE LOTES debe ser un numero entero positivo.' });
+    }
+
+    const parsedFacturaMonto = parseFacturaMonto(payload.facturaMontoRaw);
+    if (!parsedFacturaMonto.isValid) {
+        return res.status(400).json({ message: 'MONTO A FACTURAR invalido.' });
+    }
+    payload.facturaMonto = parsedFacturaMonto.value;
+
+    const authRole = normalizeUserRole(req.authUser?.role, ROLE_OPERADOR);
+    if (authRole === ROLE_OPERADOR) {
+        return res.status(403).json({
+            message: 'Tu rol no puede crear registros. Solo puedes agregar comentarios y actualizar documentacion recibida.'
+        });
+    }
+
+    const userHasBackofficeAccess = hasBackofficeRegistroAccess(req.authUser);
+    const userBranch = normalizeText(req.authUser.sucursal) || null;
+    if (!userHasBackofficeAccess && !userBranch) {
+        return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para operar registros.' });
+    }
+
+    const useManualIngreso = userHasBackofficeAccess && Boolean(parsedFromClient);
+    const connection = await pool.getConnection();
+    const userName = req.authUser.nombre || req.authUser.username;
+
+    try {
+        await connection.beginTransaction();
+        const reservedIngreso = useManualIngreso
+            ? {
+                  numIngreso: payload.numIngreso,
+                  correlativo: parsedFromClient.correlativo,
+                  anio: parsedFromClient.anio
+              }
+            : await reserveNextIngreso(connection, new Date().getFullYear());
+
+        const [insertResult] = await connection.execute(
+            `
+                INSERT INTO registros (
+                    num_ingreso, correlativo, anio,
+                    nombre, rut, telefono, correo,
+                    region, comuna, nombre_predio,
+                    rol, num_lotes, estado, comentario,
+                    factura_nombre_razon, factura_rut, factura_giro,
+                    factura_direccion, factura_comuna, factura_ciudad,
+                    factura_contacto, factura_observacion, factura_monto,
+                    created_by, created_by_sucursal,
+                    updated_by, updated_by_sucursal,
+                    documentos
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+                reservedIngreso.numIngreso,
+                reservedIngreso.correlativo,
+                reservedIngreso.anio,
+                payload.nombre,
+                payload.rut,
+                payload.telefono || null,
+                payload.correo || null,
+                payload.region,
+                payload.comuna,
+                payload.nombrePredio || null,
+                payload.rol,
+                parsedLotes.value,
+                payload.estado || null,
+                payload.comentario || null,
+                payload.facturaNombreRazon || null,
+                payload.facturaRut || null,
+                payload.facturaGiro || null,
+                payload.facturaDireccion || null,
+                payload.facturaComuna || null,
+                payload.facturaCiudad || null,
+                payload.facturaContacto || null,
+                payload.facturaObservacion || null,
+                payload.facturaMonto,
+                userName,
+                userBranch,
+                userName,
+                userBranch,
+                JSON.stringify(payload.documentos)
+            ]
+        );
+
+        const historyComment = buildHistoryComment('CREACION', payload.comentario, payload.documentos, []);
+        await insertHistoryEntry(connection, {
+            registroId: insertResult.insertId,
+            numIngreso: reservedIngreso.numIngreso,
+            accion: 'CREACION',
+            comentario: historyComment,
+            usuarioNombre: userName,
+            sucursal: userBranch
+        });
+
+        await connection.commit();
+        return res.status(201).json({
+            message: `Registro ${reservedIngreso.numIngreso} guardado.`,
+            numIngreso: reservedIngreso.numIngreso
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'El NRO INGRESO ya existe en la base de datos.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible guardar el registro.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
+    const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+    const parsedIngreso = parseNumIngreso(routeIngreso);
+
+    if (!parsedIngreso) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+    }
+
+    const rawRut = normalizeText(req.body.rut);
+    const rawCorreo = normalizeText(req.body.correo).toLowerCase();
+    const hasFacturaPayload = Boolean(req.body && typeof req.body.factura === 'object' && req.body.factura);
+    const rawFactura = hasFacturaPayload ? req.body.factura : {};
+    const payload = {
+        numIngresoNuevo: normalizeText(req.body.numIngresoNuevo || req.body.numIngreso || routeIngreso),
+        nombre: normalizeText(req.body.nombre),
+        rut: rawRut,
+        telefono: normalizeText(req.body.telefono),
+        correo: rawCorreo,
+        region: normalizeText(req.body.region),
+        comuna: normalizeText(req.body.comuna),
+        nombrePredio: normalizeText(req.body.nombrePredio),
+        rol: normalizeText(req.body.rol),
+        numLotesRaw: req.body.numLotes,
+        estado: normalizeEstado(req.body.estado),
+        comentario: normalizeText(req.body.comentario),
+        documentos: safeJsonArray(req.body.documentos),
+        facturaNombreRazon: normalizeText(rawFactura.nombreRazonSocial),
+        facturaRut: normalizeText(rawFactura.rut),
+        facturaGiro: normalizeText(rawFactura.giro),
+        facturaDireccion: normalizeText(rawFactura.direccion),
+        facturaComuna: normalizeText(rawFactura.comuna),
+        facturaCiudad: normalizeText(rawFactura.ciudad),
+        facturaContacto: normalizeText(rawFactura.contacto),
+        facturaObservacion: normalizeText(rawFactura.observacion),
+        facturaMontoRaw: rawFactura.montoFacturar
+    };
+
+    const updateLengthError = validateRegistroPayloadLengths(payload);
+    if (updateLengthError) {
+        return res.status(400).json({ message: updateLengthError });
+    }
+
+    const authRole = normalizeUserRole(req.authUser?.role, ROLE_OPERADOR);
+    const isOperatorLimitedEditor = authRole === ROLE_OPERADOR && !isGuestUser(req.authUser);
+    if (isOperatorLimitedEditor) {
+        // En OPERADOR, MODIFICAR solo aplica cambios de documentacion.
+        payload.numIngresoNuevo = routeIngreso;
+    }
+
+    if (!isOperatorLimitedEditor) {
+        if (!payload.nombre || !payload.rut || !payload.region || !payload.comuna || !payload.rol) {
+            return res.status(400).json({ message: 'Faltan campos obligatorios para modificar.' });
+        }
+
+        const formattedRut = normalizeAndFormatRut(payload.rut);
+        if (!formattedRut) {
+            return res.status(400).json({ message: 'RUT invalido. Usa formato 12.345.678-5.' });
+        }
+        payload.rut = formattedRut;
+
+        if (payload.correo && !isValidEmail(payload.correo)) {
+            return res.status(400).json({ message: 'Correo invalido. Usa formato nombre@proveedor.cl.' });
+        }
+    }
+
+    let parsedIngresoNuevo = parsedIngreso;
+    if (!isOperatorLimitedEditor) {
+        parsedIngresoNuevo = parseNumIngreso(payload.numIngresoNuevo);
+        if (!parsedIngresoNuevo) {
+            return res.status(400).json({ message: 'NRO INGRESO nuevo invalido. Usa formato 123-2026.' });
+        }
+    }
+
+    const userHasBackofficeAccess = hasBackofficeRegistroAccess(req.authUser);
+    if (!userHasBackofficeAccess && payload.numIngresoNuevo !== routeIngreso) {
+        return res.status(403).json({ message: 'Solo ADMIN o SECRETARIA pueden cambiar el NRO INGRESO.' });
+    }
+
+    const userBranch = normalizeText(req.authUser.sucursal) || null;
+    if (!userHasBackofficeAccess && !userBranch) {
+        return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para operar registros.' });
+    }
+
+    const registroScope = getRegistroAccessScope(req.authUser);
+    if (registroScope.denied) {
+        return res.status(403).json({ message: 'No tienes permisos para operar registros sin sucursal asignada.' });
+    }
+
+    let parsedLotes = parseNumLotes(payload.numLotesRaw);
+    if (isOperatorLimitedEditor) {
+        parsedLotes = { isValid: true, value: null };
+    }
+    if (!parsedLotes.isValid) {
+        return res.status(400).json({ message: 'NRO DE LOTES debe ser un numero entero positivo.' });
+    }
+
+    let parsedFacturaMonto = parseFacturaMonto(payload.facturaMontoRaw);
+    if (isOperatorLimitedEditor) {
+        parsedFacturaMonto = { isValid: true, value: null };
+    }
+    if (!parsedFacturaMonto.isValid) {
+        return res.status(400).json({ message: 'MONTO A FACTURAR invalido.' });
+    }
+    payload.facturaMonto = parsedFacturaMonto.value;
+
+    const connection = await pool.getConnection();
+    const userName = req.authUser.nombre || req.authUser.username;
+
+    try {
+        await connection.beginTransaction();
+
+        const recordScopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+        const [existingRows] = await connection.execute(
+            `
+                SELECT
+                    id,
+                    num_ingreso,
+                    nombre,
+                    rut,
+                    telefono,
+                    correo,
+                    region,
+                    comuna,
+                    nombre_predio,
+                    rol,
+                    num_lotes,
+                    estado,
+                    comentario,
+                    factura_nombre_razon,
+                    factura_rut,
+                    factura_giro,
+                    factura_direccion,
+                    factura_comuna,
+                    factura_ciudad,
+                    factura_contacto,
+                    factura_observacion,
+                    factura_monto,
+                    documentos
+                FROM registros
+                WHERE num_ingreso = ?${recordScopeWhere}
+                FOR UPDATE
+            `,
+            [routeIngreso, ...registroScope.params]
+        );
+
+        if (!existingRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese registro para modificar.' });
+        }
+
+        if (isOperatorLimitedEditor) {
+            payload.numIngresoNuevo = routeIngreso;
+            payload.nombre = normalizeText(existingRows[0].nombre);
+            payload.rut = normalizeText(existingRows[0].rut);
+            payload.telefono = normalizeText(existingRows[0].telefono);
+            payload.correo = normalizeText(existingRows[0].correo).toLowerCase();
+            payload.region = normalizeText(existingRows[0].region);
+            payload.comuna = normalizeText(existingRows[0].comuna);
+            payload.nombrePredio = normalizeText(existingRows[0].nombre_predio);
+            payload.rol = normalizeText(existingRows[0].rol);
+            payload.estado = normalizeEstado(existingRows[0].estado);
+            payload.facturaNombreRazon = normalizeText(existingRows[0].factura_nombre_razon);
+            payload.facturaRut = normalizeText(existingRows[0].factura_rut);
+            payload.facturaGiro = normalizeText(existingRows[0].factura_giro);
+            payload.facturaDireccion = normalizeText(existingRows[0].factura_direccion);
+            payload.facturaComuna = normalizeText(existingRows[0].factura_comuna);
+            payload.facturaCiudad = normalizeText(existingRows[0].factura_ciudad);
+            payload.facturaContacto = normalizeText(existingRows[0].factura_contacto);
+            payload.facturaObservacion = normalizeText(existingRows[0].factura_observacion);
+            payload.facturaMonto = existingRows[0].factura_monto === null ? null : Number(existingRows[0].factura_monto);
+            parsedLotes.value = existingRows[0].num_lotes === null ? null : Number(existingRows[0].num_lotes);
+        }
+
+        if (!hasFacturaPayload) {
+            payload.facturaNombreRazon = normalizeText(existingRows[0].factura_nombre_razon);
+            payload.facturaRut = normalizeText(existingRows[0].factura_rut);
+            payload.facturaGiro = normalizeText(existingRows[0].factura_giro);
+            payload.facturaDireccion = normalizeText(existingRows[0].factura_direccion);
+            payload.facturaComuna = normalizeText(existingRows[0].factura_comuna);
+            payload.facturaCiudad = normalizeText(existingRows[0].factura_ciudad);
+            payload.facturaContacto = normalizeText(existingRows[0].factura_contacto);
+            payload.facturaObservacion = normalizeText(existingRows[0].factura_observacion);
+            payload.facturaMonto = existingRows[0].factura_monto === null ? null : Number(existingRows[0].factura_monto);
+        }
+
+        const docsBefore = parseStoredDocumentList(existingRows[0].documentos);
+        const docsAfter = payload.documentos;
+        const docsAdded = docsAfter.filter((doc) => !docsBefore.includes(doc));
+        const docsRemoved = docsBefore.filter((doc) => !docsAfter.includes(doc));
+        const existingComment = normalizeText(existingRows[0].comentario);
+        // El comentario se modifica solo via /comentario para evitar mezclas con MODIFICAR.
+        payload.comentario = existingComment;
+        const autoGeneratedComment = buildAutomaticModificationComment(existingRows[0], payload, docsAdded, docsRemoved, parsedLotes.value);
+        const hasStructuredChanges = autoGeneratedComment !== 'modificacion sin cambios detectados.';
+        if (!hasStructuredChanges) {
+            await connection.rollback();
+            return res.json({
+                message: 'No se detectaron cambios. No se registro modificacion.',
+                numIngreso: routeIngreso,
+                noChanges: true
+            });
+        }
+
+        await connection.execute(
+            `
+                UPDATE registros
+                SET
+                    num_ingreso = ?,
+                    correlativo = ?,
+                    anio = ?,
+                    nombre = ?,
+                    rut = ?,
+                    telefono = ?,
+                    correo = ?,
+                    region = ?,
+                    comuna = ?,
+                    nombre_predio = ?,
+                    rol = ?,
+                    num_lotes = ?,
+                    estado = ?,
+                    comentario = ?,
+                    factura_nombre_razon = ?,
+                    factura_rut = ?,
+                    factura_giro = ?,
+                    factura_direccion = ?,
+                    factura_comuna = ?,
+                    factura_ciudad = ?,
+                    factura_contacto = ?,
+                    factura_observacion = ?,
+                    factura_monto = ?,
+                    updated_by = ?,
+                    updated_by_sucursal = ?,
+                    documentos = ?
+                WHERE num_ingreso = ?
+            `,
+            [
+                payload.numIngresoNuevo,
+                parsedIngresoNuevo.correlativo,
+                parsedIngresoNuevo.anio,
+                payload.nombre,
+                payload.rut,
+                payload.telefono || null,
+                payload.correo || null,
+                payload.region,
+                payload.comuna,
+                payload.nombrePredio || null,
+                payload.rol,
+                parsedLotes.value,
+                payload.estado || null,
+                payload.comentario || null,
+                payload.facturaNombreRazon || null,
+                payload.facturaRut || null,
+                payload.facturaGiro || null,
+                payload.facturaDireccion || null,
+                payload.facturaComuna || null,
+                payload.facturaCiudad || null,
+                payload.facturaContacto || null,
+                payload.facturaObservacion || null,
+                payload.facturaMonto,
+                userName,
+                userBranch,
+                JSON.stringify(docsAfter),
+                routeIngreso
+            ]
+        );
+
+        const historyComment = autoGeneratedComment || 'Registro modificado.';
+        await insertHistoryEntry(connection, {
+            registroId: existingRows[0].id,
+            numIngreso: payload.numIngresoNuevo,
+            accion: 'MODIFICACION',
+            comentario: historyComment,
+            usuarioNombre: userName,
+            sucursal: userBranch
+        });
+
+        await connection.commit();
+        return res.json({ message: `Registro ${payload.numIngresoNuevo} modificado.`, numIngreso: payload.numIngresoNuevo });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+
+        if (error && error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'El NRO INGRESO nuevo ya existe en la base de datos.' });
+        }
+
+        return res.status(500).json({ message: 'No fue posible modificar el registro.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.post('/api/registros/:numIngreso/comentario', requireWriteAccess, async (req, res) => {
+    const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+    const parsedIngreso = parseNumIngreso(routeIngreso);
+    if (!parsedIngreso) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+    }
+
+    const comentario = normalizeText(req.body.comentario);
+    if (!comentario) {
+        return res.status(400).json({ message: 'Debes ingresar un comentario para guardar.' });
+    }
+    if (exceedsMaxLength(comentario, 4000)) {
+        return res.status(400).json({ message: 'COMENTARIO excede el maximo permitido de 4000 caracteres.' });
+    }
+
+    const userHasBackofficeAccess = hasBackofficeRegistroAccess(req.authUser);
+    const userBranch = normalizeText(req.authUser.sucursal) || null;
+    if (!userHasBackofficeAccess && !userBranch) {
+        return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para operar registros.' });
+    }
+
+    const registroScope = getRegistroAccessScope(req.authUser);
+    if (registroScope.denied) {
+        return res.status(403).json({ message: 'No tienes permisos para operar registros sin sucursal asignada.' });
+    }
+
+    const connection = await pool.getConnection();
+    const userName = req.authUser.nombre || req.authUser.username;
+
+    try {
+        await connection.beginTransaction();
+
+        const recordScopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+        const [existingRows] = await connection.execute(
+            `
+                SELECT id, num_ingreso
+                FROM registros
+                WHERE num_ingreso = ?${recordScopeWhere}
+                FOR UPDATE
+            `,
+            [routeIngreso, ...registroScope.params]
+        );
+
+        if (!existingRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese registro para guardar comentario.' });
+        }
+
+        await connection.execute(
+            `
+                UPDATE registros
+                SET
+                    comentario = ?,
+                    updated_by = ?,
+                    updated_by_sucursal = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            `,
+            [comentario, userName, userBranch, existingRows[0].id]
+        );
+
+        await insertHistoryEntry(connection, {
+            registroId: existingRows[0].id,
+            numIngreso: existingRows[0].num_ingreso,
+            accion: 'COMENTARIO',
+            comentario,
+            usuarioNombre: userName,
+            sucursal: userBranch
+        });
+
+        await connection.commit();
+        return res.json({
+            message: 'Comentario guardado correctamente.',
+            numIngreso: existingRows[0].num_ingreso
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible guardar el comentario.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.delete('/api/registros/:numIngreso', requireWriteAccess, requireAdmin, async (req, res) => {
+    const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+    const parsedIngreso = parseNumIngreso(routeIngreso);
+
+    if (!parsedIngreso) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        const [existingRows] = await connection.execute(
+            'SELECT id FROM registros WHERE num_ingreso = ? FOR UPDATE',
+            [routeIngreso]
+        );
+
+        if (!existingRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese registro para eliminar.' });
+        }
+
+        await connection.execute('DELETE FROM registro_historial WHERE registro_id = ?', [existingRows[0].id]);
+        await connection.execute('DELETE FROM registros WHERE id = ?', [existingRows[0].id]);
+
+        await connection.commit();
+        return res.json({ message: `Registro ${routeIngreso} eliminado.` });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible eliminar el registro.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.get('/api/registros/sucursales-disponibles', async (req, res) => {
+    try {
+        const registroScope = getRegistroAccessScope(req.authUser);
+        if (registroScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para buscar registros.' });
+        }
+
+        if (!hasBackofficeRegistroAccess(req.authUser) && !isGuestUser(req.authUser)) {
+            const branch = normalizeText(req.authUser && req.authUser.sucursal);
+            return res.json({ sucursales: branch ? [branch] : [] });
+        }
+
+        const [catalogRows] = await pool.execute(
+            `
+                SELECT nombre
+                FROM sucursales
+                ORDER BY nombre ASC
+            `
+        );
+        const [registroRows] = await pool.execute(
+            `
+                SELECT DISTINCT sucursal
+                FROM (
+                    SELECT created_by_sucursal AS sucursal FROM registros
+                    UNION
+                    SELECT updated_by_sucursal AS sucursal FROM registros
+                ) AS registro_sucursales
+                WHERE sucursal IS NOT NULL AND TRIM(sucursal) <> ''
+            `
+        );
+
+        const sucursales = Array.from(
+            new Set(
+                [...catalogRows, ...registroRows]
+                    .map((row) => normalizeText(row.nombre || row.sucursal))
+                    .filter((value) => value.length > 0)
+            )
+        ).sort((left, right) => left.localeCompare(right, 'es'));
+
+        return res.json({ sucursales });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible listar sucursales disponibles.' });
+    }
+});
+
+app.get('/api/registros/buscar-rango-fechas', async (req, res) => {
+    try {
+        const fechaDesde = normalizeText(req.query.fechaDesde);
+        const fechaHasta = normalizeText(req.query.fechaHasta);
+        const sucursal = normalizeText(req.query.sucursal);
+        const registroScope = getRegistroAccessScope(req.authUser);
+
+        if (registroScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para buscar registros.' });
+        }
+
+        if (!isValidIsoDateOnly(fechaDesde) || !isValidIsoDateOnly(fechaHasta)) {
+            return res.status(400).json({ message: 'Rango de fechas invalido. Usa formato YYYY-MM-DD.' });
+        }
+
+        if (fechaDesde > fechaHasta) {
+            return res.status(400).json({ message: 'La fecha DESDE no puede ser mayor que HASTA.' });
+        }
+
+        if (sucursal && exceedsMaxLength(sucursal, 120)) {
+            return res.status(400).json({ message: 'Sucursal excede el largo maximo permitido.' });
+        }
+
+        const where = ['DATE(created_at) BETWEEN ? AND ?'];
+        const values = [fechaDesde, fechaHasta];
+        if (sucursal) {
+            where.push('(created_by_sucursal = ? OR updated_by_sucursal = ?)');
+            values.push(sucursal, sucursal);
+        }
+        if (registroScope.clause) {
+            where.push(registroScope.clause);
+            values.push(...registroScope.params);
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    num_ingreso,
+                    nombre,
+                    rut,
+                    rol,
+                    region,
+                    comuna,
+                    estado,
+                    created_by_sucursal,
+                    updated_by_sucursal,
+                    created_at
+                FROM registros
+                WHERE ${where.join(' AND ')}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 300
+            `,
+            values
+        );
+
+        const registros = rows.map((row) => ({
+            numIngreso: row.num_ingreso,
+            nombre: row.nombre,
+            rut: row.rut,
+            rol: row.rol,
+            region: row.region,
+            comuna: row.comuna,
+            sucursal: normalizeText(row.updated_by_sucursal || row.created_by_sucursal),
+            estado: normalizeEstado(row.estado),
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at)
+        }));
+
+        return res.json({ registros });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible buscar registros por rango de fechas.' });
+    }
+});
+
+app.get('/api/registros/buscar', async (req, res) => {
+    try {
+        const nombre = normalizeText(req.query.nombre);
+        const rut = normalizeText(req.query.rut);
+        const rol = normalizeText(req.query.rol);
+        const numIngreso = normalizeText(req.query.numIngreso);
+        const registroScope = getRegistroAccessScope(req.authUser);
+
+        if (registroScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para buscar registros.' });
+        }
+
+        if (exceedsMaxLength(nombre, 255) || exceedsMaxLength(rut, 20) || exceedsMaxLength(rol, 120) || exceedsMaxLength(numIngreso, 20)) {
+            return res.status(400).json({ message: 'Uno o mas criterios de busqueda exceden el largo maximo permitido.' });
+        }
+
+        if (numIngreso && !parseNumIngreso(numIngreso)) {
+            return res.status(400).json({ message: 'NRO INGRESO invalido para busqueda exacta.' });
+        }
+
+        if (!nombre && !rut && !rol && !numIngreso) {
+            return res.status(400).json({ message: 'Ingresa nombre, rut, rol o NRO INGRESO para buscar.' });
+        }
+
+        const where = [];
+        const values = [];
+
+        if (numIngreso) {
+            where.push('num_ingreso = ?');
+            values.push(numIngreso);
+        }
+
+        if (nombre) {
+            where.push('LOWER(nombre) LIKE LOWER(?)');
+            values.push(`%${nombre}%`);
+        }
+
+        if (rut) {
+            where.push("REPLACE(REPLACE(REPLACE(LOWER(rut), '.', ''), '-', ''), ' ', '') = ?");
+            values.push(normalizeRut(rut));
+        }
+
+        if (rol) {
+            where.push('LOWER(rol) = LOWER(?)');
+            values.push(rol);
+        }
+
+        if (registroScope.clause) {
+            where.push(registroScope.clause);
+            values.push(...registroScope.params);
+        }
+
+        const queryLimit = numIngreso ? 1 : 20;
+        const query = `
+            SELECT
+                id,
+                num_ingreso, nombre, rut, telefono, correo,
+                region, comuna, nombre_predio, rol,
+                num_lotes, estado, comentario,
+                factura_nombre_razon, factura_rut, factura_giro,
+                factura_direccion, factura_comuna, factura_ciudad,
+                factura_contacto, factura_observacion, factura_monto,
+                documentos
+            FROM registros
+            WHERE ${where.join(' AND ')}
+            ORDER BY id DESC
+            LIMIT ${queryLimit}
+        `;
+
+        const [rows] = await pool.execute(query, values);
+
+        if (!rows.length) {
+            return res.status(404).json({ message: 'No se encontro un registro con los datos ingresados.' });
+        }
+
+        if (rows.length > 1) {
+            const coincidencias = rows.map((row) => ({
+                numIngreso: row.num_ingreso,
+                nombre: row.nombre,
+                rut: row.rut,
+                rol: row.rol,
+                region: row.region,
+                comuna: row.comuna
+            }));
+
+            return res.json({
+                message: `Se encontraron ${rows.length} registros. Refina la busqueda o selecciona un NRO INGRESO exacto.`,
+                coincidencias
+            });
+        }
+
+        const response = toApiRow(rows[0]);
+        if (isGuestUser(req.authUser)) {
+            response.comentario = '';
+            response.historial = [];
+            return res.json(response);
+        }
+
+        response.historial = await fetchHistoryByRegistroId(rows[0].id);
+        return res.json(response);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible buscar el registro.' });
+    }
+});
+
+app.get('/api/registros/:numIngreso/historial', async (req, res) => {
+    try {
+        const numIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+        const parsedIngreso = parseNumIngreso(numIngreso);
+        const registroScope = getRegistroAccessScope(req.authUser);
+
+        if (registroScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para consultar historial.' });
+        }
+
+        if (!parsedIngreso) {
+            return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+        }
+
+        const scopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+        const [rows] = await pool.execute(
+            `SELECT id FROM registros WHERE num_ingreso = ?${scopeWhere} LIMIT 1`,
+            [numIngreso, ...registroScope.params]
+        );
+        if (!rows.length) {
+            return res.status(404).json({ message: 'No existe ese registro.' });
+        }
+
+        if (isGuestUser(req.authUser)) {
+            return res.json({ historial: [] });
+        }
+
+        const historial = await fetchHistoryByRegistroId(rows[0].id);
+        return res.json({ historial });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar el historial.' });
+    }
+});
+
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/index.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+for (const fileName of FRONTEND_FILES) {
+    if (fileName === 'index.html') {
+        continue;
+    }
+
+    app.get(`/${fileName}`, (req, res) => {
+        res.sendFile(path.join(__dirname, fileName));
+    });
+}
+
+app.use((err, req, res, next) => {
+    const isJsonParseError =
+        err &&
+        (err.type === 'entity.parse.failed' ||
+            ((err instanceof SyntaxError || err.name === 'SyntaxError') &&
+                (Number(err.status) === 400 || Number(err.statusCode) === 400) &&
+                Object.prototype.hasOwnProperty.call(err, 'body')));
+
+    if (isJsonParseError) {
+        return res.status(400).json({ message: 'JSON invalido en la solicitud.' });
+    }
+
+    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
+        return res.status(err.status).json({ message: err.message || 'Solicitud invalida.' });
+    }
+
+    console.error(err);
+    return res.status(500).json({ message: 'Error interno del servidor.' });
+});
+
+async function start() {
+    try {
+        if (!IS_LOCALHOST_BIND && !API_WRITE_KEY) {
+            throw new Error('Debes configurar API_WRITE_KEY cuando HOST no es localhost.');
+        }
+
+        await initDatabase();
+        app.listen(PORT, HOST, () => {
+            console.log(`Servidor activo en http://${HOST}:${PORT}`);
+            console.log(`CORS habilitado para: ${ALLOWED_ORIGINS.join(', ')}`);
+
+            if (API_WRITE_KEY) {
+                console.log('Proteccion de escritura activada (header: X-API-Key).');
+            } else {
+                console.warn('API_WRITE_KEY no configurada: operaciones POST/PUT sin token (solo recomendable en localhost).');
+            }
+        });
+    } catch (error) {
+        console.error('No fue posible iniciar el servidor:', error.message);
+        for (const hint of getStartupHints(error)) {
+            console.error(`Sugerencia: ${hint}`);
+        }
+        process.exit(1);
+    }
+}
+
+start();
