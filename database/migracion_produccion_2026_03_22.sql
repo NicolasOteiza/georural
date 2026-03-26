@@ -12,6 +12,64 @@ CREATE DATABASE IF NOT EXISTS `geo_rural` CHARACTER SET utf8mb4 COLLATE utf8mb4_
 USE `geo_rural`;
 
 /* -------------------------------------------------------------------------- */
+/*  Compatibilidad: renombrar tablas antiguas antes de CREATE TABLE            */
+/* -------------------------------------------------------------------------- */
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS `rename_table_if_needed`$$
+CREATE PROCEDURE `rename_table_if_needed`(
+    IN p_old VARCHAR(64),
+    IN p_new VARCHAR(64)
+)
+BEGIN
+    DECLARE v_old_exists INT DEFAULT 0;
+    DECLARE v_new_exists INT DEFAULT 0;
+
+    SELECT COUNT(*)
+      INTO v_old_exists
+      FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = p_old;
+
+    SELECT COUNT(*)
+      INTO v_new_exists
+      FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = p_new;
+
+    IF v_old_exists = 1 AND v_new_exists = 0 THEN
+        SET @sql = CONCAT('RENAME TABLE `', p_old, '` TO `', p_new, '`');
+        PREPARE stmt FROM @sql;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    ELSEIF v_old_exists = 1 AND v_new_exists = 1 THEN
+        SELECT CONCAT(
+            'Aviso: existen ',
+            p_old,
+            ' y ',
+            p_new,
+            '. No se renombro para evitar sobrescribir datos.'
+        ) AS aviso;
+    END IF;
+END$$
+
+DELIMITER ;
+
+CALL rename_table_if_needed('historial_registros', 'registro_historial');
+CALL rename_table_if_needed('registros_historial', 'registro_historial');
+CALL rename_table_if_needed('facturas_solicitudes', 'factura_solicitudes');
+CALL rename_table_if_needed('factura_solicitud', 'factura_solicitudes');
+CALL rename_table_if_needed('cotizacion_servicios', 'cotizacion_servicios_estandar');
+CALL rename_table_if_needed('servicios_cotizacion', 'cotizacion_servicios_estandar');
+CALL rename_table_if_needed('configuracion_correo', 'correo_configuracion');
+CALL rename_table_if_needed('correo_config', 'correo_configuracion');
+CALL rename_table_if_needed('sesiones_usuarios', 'sesiones');
+CALL rename_table_if_needed('usuario_sesiones', 'sesiones');
+
+DROP PROCEDURE IF EXISTS `rename_table_if_needed`;
+
+/* -------------------------------------------------------------------------- */
 /*  Tablas principales (create if not exists)                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -353,7 +411,7 @@ UPDATE `usuarios`
    SET `role` = 'OPERADOR'
  WHERE `role` IS NULL
     OR TRIM(`role`) = ''
-    OR `role` NOT IN ('SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR');
+    OR `role` NOT IN ('SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR', 'SUPERVISOR');
 
 UPDATE `usuarios`
    SET `must_change_password` = 0
@@ -680,12 +738,11 @@ CALL ensure_fk_safe(
 /*  Sincronizacion de sucursales desde usuarios                                */
 /* -------------------------------------------------------------------------- */
 
-INSERT INTO `sucursales` (`nombre`)
+INSERT IGNORE INTO `sucursales` (`nombre`)
 SELECT DISTINCT TRIM(`u`.`sucursal`) AS `nombre`
   FROM `usuarios` u
  WHERE `u`.`sucursal` IS NOT NULL
-   AND TRIM(`u`.`sucursal`) <> ''
-ON DUPLICATE KEY UPDATE `nombre` = `nombre`;
+   AND TRIM(`u`.`sucursal`) <> '';
 
 /* -------------------------------------------------------------------------- */
 /*  Seed inicial cotizacion (solo si tabla esta vacia)                        */

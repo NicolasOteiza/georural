@@ -37,10 +37,11 @@ const DEFAULT_USERS = parseDefaultUsers(process.env.DEFAULT_USERS || '');
 const ROLE_ADMIN = 'ADMIN';
 const ROLE_SECRETARIA = 'SECRETARIA';
 const ROLE_OPERADOR = 'OPERADOR';
+const ROLE_SUPERVISOR = 'SUPERVISOR';
 const ROLE_SUPER = 'SUPER';
 const PRIVILEGED_ROLES = Object.freeze([ROLE_ADMIN, ROLE_SUPER]);
-const ASSIGNABLE_ROLES_BY_ADMIN = Object.freeze([ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR]);
-const ASSIGNABLE_ROLES_BY_SUPER = Object.freeze([ROLE_SUPER, ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR]);
+const ASSIGNABLE_ROLES_BY_ADMIN = Object.freeze([ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR, ROLE_SUPERVISOR]);
+const ASSIGNABLE_ROLES_BY_SUPER = Object.freeze([ROLE_SUPER, ROLE_ADMIN, ROLE_SECRETARIA, ROLE_OPERADOR, ROLE_SUPERVISOR]);
 const SUPERUSER_USERNAME = normalizeText(process.env.SUPERUSER_USERNAME || 'superusuario').toLowerCase();
 const SUPERUSER_PASSWORD = String(process.env.SUPERUSER_PASSWORD || '');
 const SUPERUSER_NAME = normalizeText(process.env.SUPERUSER_NAME || 'Super Usuario') || 'Super Usuario';
@@ -49,10 +50,13 @@ const GUEST_USERNAME = normalizeText(process.env.GUEST_USERNAME || 'invitado').t
 const GUEST_DISPLAY_NAME = normalizeText(process.env.GUEST_NAME || 'Invitado') || 'Invitado';
 const GUEST_BRANCH_NAME = normalizeText(process.env.GUEST_BRANCH || 'Casa Matriz') || 'Casa Matriz';
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
+const SECRETARIA_NO_MOVIMIENTO_DAYS = parsePositiveInt(process.env.SECRETARIA_NO_MOVIMIENTO_DAYS, 8);
 const FACTURA_SOLICITUD_ESTADO_PENDIENTE = 'PENDIENTE';
 const FACTURA_SOLICITUD_ESTADO_ENVIADA = 'ENVIADA';
 const FACTURA_SOLICITUD_ESTADO_ANULADA = 'ANULADA';
 const SIMPLE_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const HISTORY_DETAIL_MAX_CHANGES = parsePositiveInt(process.env.HISTORY_DETAIL_MAX_CHANGES, 4);
+const HISTORY_SUMMARY_MAX_LABELS = parsePositiveInt(process.env.HISTORY_SUMMARY_MAX_LABELS, 5);
 const UTM_SOURCE_URL = normalizeText(process.env.UTM_SOURCE_URL || 'https://mindicador.cl/api/utm');
 const UTM_SOURCE_TIMEOUT_MS = parsePositiveInt(process.env.UTM_SOURCE_TIMEOUT_MS, 5000);
 const UTM_SOURCE_CACHE_MINUTES = parsePositiveInt(process.env.UTM_SOURCE_CACHE_MINUTES, 30);
@@ -233,10 +237,32 @@ function getStartupHints(error) {
         ];
     }
 
+    if (error.code === 'ER_DBACCESS_DENIED_ERROR' || error.code === 'ER_SPECIFIC_ACCESS_DENIED_ERROR') {
+        return [
+            `El usuario MySQL "${DB_USER}" no tiene permisos suficientes sobre la base "${DB_NAME}".`,
+            'Otorga permisos sobre esa base o crea el esquema manualmente con database/schema.sql.'
+        ];
+    }
+
     if (error.code === 'ER_BAD_DB_ERROR') {
         return [
             `No se encontro la base "${DB_NAME}" y no se pudo crear automaticamente.`,
             'Verifica permisos del usuario MySQL o crea el esquema manualmente con database/schema.sql.'
+        ];
+    }
+
+    if (error.code === 'EADDRINUSE' && error.syscall === 'listen') {
+        return [
+            `El puerto ${PORT} ya esta en uso por otro proceso.`,
+            'Cierra el proceso que usa ese puerto o cambia PORT en .env.',
+            'En Windows puedes usar: netstat -ano | findstr :3000'
+        ];
+    }
+
+    if (error.code === 'EACCES' && error.syscall === 'listen') {
+        return [
+            `No hay permisos para abrir ${HOST}:${PORT}.`,
+            'Ejecuta con permisos adecuados o usa un puerto permitido (por ejemplo >= 1024).'
         ];
     }
 
@@ -353,9 +379,18 @@ function normalizeUserRole(value, fallbackRole = ROLE_OPERADOR) {
     if (role === ROLE_OPERADOR) {
         return ROLE_OPERADOR;
     }
+    if (role === ROLE_SUPERVISOR) {
+        return ROLE_SUPERVISOR;
+    }
 
     const fallback = String(fallbackRole || '').trim().toUpperCase();
-    if (fallback === ROLE_SUPER || fallback === ROLE_ADMIN || fallback === ROLE_SECRETARIA || fallback === ROLE_OPERADOR) {
+    if (
+        fallback === ROLE_SUPER ||
+        fallback === ROLE_ADMIN ||
+        fallback === ROLE_SECRETARIA ||
+        fallback === ROLE_OPERADOR ||
+        fallback === ROLE_SUPERVISOR
+    ) {
         return fallback;
     }
 
@@ -463,6 +498,77 @@ function isValidIsoDateOnly(value) {
     }
 
     return parsed.toISOString().slice(0, 10) === text;
+}
+
+function parseHistoryDateTimeInput(value) {
+    const normalized = normalizeText(value).replace(' ', 'T');
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(normalized);
+    if (!match) {
+        return null;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || '0');
+
+    if (
+        !Number.isInteger(year) ||
+        !Number.isInteger(month) ||
+        !Number.isInteger(day) ||
+        !Number.isInteger(hour) ||
+        !Number.isInteger(minute) ||
+        !Number.isInteger(second)
+    ) {
+        return null;
+    }
+
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+        return null;
+    }
+
+    const candidate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    if (Number.isNaN(candidate.getTime())) {
+        return null;
+    }
+
+    if (
+        candidate.getUTCFullYear() !== year ||
+        candidate.getUTCMonth() + 1 !== month ||
+        candidate.getUTCDate() !== day ||
+        candidate.getUTCHours() !== hour ||
+        candidate.getUTCMinutes() !== minute ||
+        candidate.getUTCSeconds() !== second
+    ) {
+        return null;
+    }
+
+    const safeSecond = String(second).padStart(2, '0');
+    return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${safeSecond}`;
+}
+
+function toApiDateTimeLocal(value) {
+    if (!value) {
+        return '';
+    }
+
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) {
+            return '';
+        }
+
+        const year = String(value.getFullYear()).padStart(4, '0');
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        const hours = String(value.getHours()).padStart(2, '0');
+        const minutes = String(value.getMinutes()).padStart(2, '0');
+        const seconds = String(value.getSeconds()).padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    return String(value || '');
 }
 
 function parseNumLotes(value) {
@@ -1006,6 +1112,10 @@ function isPrivilegedRole(role) {
     return PRIVILEGED_ROLES.includes(normalizeUserRole(role, ROLE_OPERADOR));
 }
 
+function shouldForcePasswordChangeForRole(role) {
+    return normalizeUserRole(role, ROLE_OPERADOR) !== ROLE_SUPER;
+}
+
 function isAdminOrSuperUser(user) {
     return isAdminUser(user) || isSuperUser(user);
 }
@@ -1014,8 +1124,28 @@ function isSecretaryUser(user) {
     return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_SECRETARIA;
 }
 
+function isOperatorUser(user) {
+    return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_OPERADOR;
+}
+
+function isSupervisorUser(user) {
+    return normalizeUserRole(user?.role, ROLE_OPERADOR) === ROLE_SUPERVISOR;
+}
+
 function canUseSecretaryFeatures(user) {
     return isSecretaryUser(user) || isSuperUser(user);
+}
+
+function canUseInvoiceWorkflow(user) {
+    return isOperatorUser(user) || canUseSecretaryFeatures(user);
+}
+
+function canUseOperatorDocumentAlerts(user) {
+    return isOperatorUser(user) || isSuperUser(user);
+}
+
+function canReceiveWriteApiKey(user) {
+    return Boolean(API_WRITE_KEY) && !isGuestUser(user);
 }
 
 function getAssignableRolesForUser(user) {
@@ -1031,28 +1161,11 @@ function hasBackofficeRegistroAccess(user) {
 }
 
 function getRegistroAccessScope(user, tableAlias = '') {
-    if (hasBackofficeRegistroAccess(user) || isGuestUser(user)) {
-        return {
-            denied: false,
-            clause: '',
-            params: []
-        };
-    }
-
-    const branch = normalizeText(user && user.sucursal);
-    if (!branch) {
-        return {
-            denied: true,
-            clause: '',
-            params: []
-        };
-    }
-
-    const prefix = tableAlias ? `${tableAlias}.` : '';
+    // Registros globales: todos los roles autenticados pueden consultar sin filtro por sucursal.
     return {
         denied: false,
-        clause: `(${prefix}created_by_sucursal = ? OR ${prefix}updated_by_sucursal = ?)`,
-        params: [branch, branch]
+        clause: '',
+        params: []
     };
 }
 
@@ -1078,6 +1191,40 @@ function getFacturaSolicitudAccessScope(user, tableAlias = '') {
     return {
         denied: false,
         clause: `${prefix}created_by_sucursal = ?`,
+        params: [branch]
+    };
+}
+
+function getOperatorDocumentAlertsScope(user, tableAlias = '') {
+    if (isSuperUser(user)) {
+        return {
+            denied: false,
+            clause: '',
+            params: []
+        };
+    }
+
+    if (!isOperatorUser(user)) {
+        return {
+            denied: true,
+            clause: '',
+            params: []
+        };
+    }
+
+    const branch = normalizeText(user && user.sucursal);
+    if (!branch) {
+        return {
+            denied: true,
+            clause: '',
+            params: []
+        };
+    }
+
+    const prefix = tableAlias ? `${tableAlias}.` : '';
+    return {
+        denied: false,
+        clause: `(${prefix}sucursal = ? OR ${prefix}sucursal IS NULL OR TRIM(${prefix}sucursal) = '')`,
         params: [branch]
     };
 }
@@ -1146,36 +1293,63 @@ function formatHistoryFacturaMontoValue(value) {
     })}`;
 }
 
+function formatHistoryChangeLabelSummary(labels, maxVisible = HISTORY_SUMMARY_MAX_LABELS) {
+    const uniqueLabels = Array.from(
+        new Set(
+            (Array.isArray(labels) ? labels : [])
+                .map((item) => normalizeText(item))
+                .filter((item) => Boolean(item))
+        )
+    );
+
+    if (uniqueLabels.length === 0) {
+        return '';
+    }
+
+    const safeMax = Number.isInteger(maxVisible) && maxVisible > 0 ? maxVisible : 5;
+    if (uniqueLabels.length <= safeMax) {
+        return uniqueLabels.join(', ');
+    }
+
+    const visibleLabels = uniqueLabels.slice(0, safeMax);
+    const remaining = uniqueLabels.length - safeMax;
+    return `${visibleLabels.join(', ')} +${remaining} mas`;
+}
+
 function buildAutomaticModificationComment(existingRow, payload, docsAdded = [], docsRemoved = [], parsedNumLotesValue = null) {
     const changes = [];
 
-    const appendTextChange = (label, beforeValue, afterValue) => {
+    const appendTextChange = (label, beforeValue, afterValue, group = 'registro') => {
         const before = normalizeText(beforeValue);
         const after = normalizeText(afterValue);
         if (before === after) {
             return;
         }
 
-        changes.push(`modificacion de ${label}: ${formatHistoryTextValue(before)} -> ${formatHistoryTextValue(after)}`);
+        changes.push({
+            group,
+            label,
+            detail: `modificacion de ${label}: ${formatHistoryTextValue(before)} -> ${formatHistoryTextValue(after)}`
+        });
     };
 
-    appendTextChange('nro ingreso', existingRow.num_ingreso, payload.numIngresoNuevo);
-    appendTextChange('nombre', existingRow.nombre, payload.nombre);
-    appendTextChange('rut', existingRow.rut, payload.rut);
-    appendTextChange('telefono', existingRow.telefono, payload.telefono);
-    appendTextChange('correo', existingRow.correo, payload.correo);
-    appendTextChange('region', existingRow.region, payload.region);
-    appendTextChange('comuna', existingRow.comuna, payload.comuna);
-    appendTextChange('nombre predio', existingRow.nombre_predio, payload.nombrePredio);
-    appendTextChange('rol', existingRow.rol, payload.rol);
-    appendTextChange('factura nombre/razon social', existingRow.factura_nombre_razon, payload.facturaNombreRazon);
-    appendTextChange('factura rut', existingRow.factura_rut, payload.facturaRut);
-    appendTextChange('factura giro', existingRow.factura_giro, payload.facturaGiro);
-    appendTextChange('factura direccion', existingRow.factura_direccion, payload.facturaDireccion);
-    appendTextChange('factura comuna', existingRow.factura_comuna, payload.facturaComuna);
-    appendTextChange('factura ciudad', existingRow.factura_ciudad, payload.facturaCiudad);
-    appendTextChange('factura contacto', existingRow.factura_contacto, payload.facturaContacto);
-    appendTextChange('factura observacion', existingRow.factura_observacion, payload.facturaObservacion);
+    appendTextChange('nro ingreso', existingRow.num_ingreso, payload.numIngresoNuevo, 'registro');
+    appendTextChange('nombre', existingRow.nombre, payload.nombre, 'registro');
+    appendTextChange('rut', existingRow.rut, payload.rut, 'registro');
+    appendTextChange('telefono', existingRow.telefono, payload.telefono, 'registro');
+    appendTextChange('correo', existingRow.correo, payload.correo, 'registro');
+    appendTextChange('region', existingRow.region, payload.region, 'registro');
+    appendTextChange('comuna', existingRow.comuna, payload.comuna, 'registro');
+    appendTextChange('nombre predio', existingRow.nombre_predio, payload.nombrePredio, 'registro');
+    appendTextChange('rol', existingRow.rol, payload.rol, 'registro');
+    appendTextChange('factura nombre/razon social', existingRow.factura_nombre_razon, payload.facturaNombreRazon, 'factura');
+    appendTextChange('factura rut', existingRow.factura_rut, payload.facturaRut, 'factura');
+    appendTextChange('factura giro', existingRow.factura_giro, payload.facturaGiro, 'factura');
+    appendTextChange('factura direccion', existingRow.factura_direccion, payload.facturaDireccion, 'factura');
+    appendTextChange('factura comuna', existingRow.factura_comuna, payload.facturaComuna, 'factura');
+    appendTextChange('factura ciudad', existingRow.factura_ciudad, payload.facturaCiudad, 'factura');
+    appendTextChange('factura contacto', existingRow.factura_contacto, payload.facturaContacto, 'factura');
+    appendTextChange('factura observacion', existingRow.factura_observacion, payload.facturaObservacion, 'factura');
 
     const beforeLotes = existingRow.num_lotes === null || typeof existingRow.num_lotes === 'undefined' ? null : Number(existingRow.num_lotes);
     const afterLotes =
@@ -1183,17 +1357,21 @@ function buildAutomaticModificationComment(existingRow, payload, docsAdded = [],
             ? null
             : Number(parsedNumLotesValue);
     if (beforeLotes !== afterLotes) {
-        changes.push(
-            `modificacion de nro de lotes: ${formatHistoryNumLotesValue(beforeLotes)} -> ${formatHistoryNumLotesValue(afterLotes)}`
-        );
+        changes.push({
+            group: 'registro',
+            label: 'nro de lotes',
+            detail: `modificacion de nro de lotes: ${formatHistoryNumLotesValue(beforeLotes)} -> ${formatHistoryNumLotesValue(afterLotes)}`
+        });
     }
 
     const beforeEstado = normalizeEstado(existingRow.estado);
     const afterEstado = normalizeEstado(payload.estado);
     if (beforeEstado !== afterEstado) {
-        changes.push(
-            `modificacion de estado de factura: ${formatHistoryEstadoValue(beforeEstado)} -> ${formatHistoryEstadoValue(afterEstado)}`
-        );
+        changes.push({
+            group: 'registro',
+            label: 'estado de factura',
+            detail: `modificacion de estado de factura: ${formatHistoryEstadoValue(beforeEstado)} -> ${formatHistoryEstadoValue(afterEstado)}`
+        });
     }
 
     const beforeFacturaMonto =
@@ -1205,24 +1383,68 @@ function buildAutomaticModificationComment(existingRow, payload, docsAdded = [],
             ? null
             : Number(payload.facturaMonto);
     if (beforeFacturaMonto !== afterFacturaMonto) {
-        changes.push(
-            `modificacion de monto a facturar: ${formatHistoryFacturaMontoValue(beforeFacturaMonto)} -> ${formatHistoryFacturaMontoValue(afterFacturaMonto)}`
-        );
+        changes.push({
+            group: 'factura',
+            label: 'monto a facturar',
+            detail: `modificacion de monto a facturar: ${formatHistoryFacturaMontoValue(beforeFacturaMonto)} -> ${formatHistoryFacturaMontoValue(afterFacturaMonto)}`
+        });
     }
 
     if (docsAdded.length > 0) {
-        changes.push(`documentos agregados: ${docsAdded.join(', ')}`);
+        changes.push({
+            group: 'documentos',
+            label: 'agregados',
+            detail: `documentos agregados: ${docsAdded.join(', ')}`
+        });
     }
 
     if (docsRemoved.length > 0) {
-        changes.push(`documentos eliminados: ${docsRemoved.join(', ')}`);
+        changes.push({
+            group: 'documentos',
+            label: 'eliminados',
+            detail: `documentos eliminados: ${docsRemoved.join(', ')}`
+        });
     }
 
     if (changes.length === 0) {
         return 'modificacion sin cambios detectados.';
     }
 
-    return changes.join(' | ');
+    if (changes.length <= HISTORY_DETAIL_MAX_CHANGES) {
+        return changes.map((item) => item.detail).join(' | ');
+    }
+
+    const registroLabels = changes
+        .filter((item) => item.group === 'registro')
+        .map((item) => item.label);
+    const facturaLabels = changes
+        .filter((item) => item.group === 'factura')
+        .map((item) => normalizeText(item.label).replace(/^factura\s+/i, ''));
+    const summaryParts = [];
+
+    const registroSummary = formatHistoryChangeLabelSummary(registroLabels);
+    if (registroSummary) {
+        summaryParts.push(`registro: ${registroSummary}`);
+    }
+
+    const facturaSummary = formatHistoryChangeLabelSummary(facturaLabels);
+    if (facturaSummary) {
+        summaryParts.push(`factura: ${facturaSummary}`);
+    }
+
+    if (docsAdded.length > 0) {
+        const addedPreview = docsAdded.slice(0, 3).join(', ');
+        const addedSuffix = docsAdded.length > 3 ? ` +${docsAdded.length - 3} mas` : '';
+        summaryParts.push(`documentos +${docsAdded.length}${addedPreview ? ` (${addedPreview}${addedSuffix})` : ''}`);
+    }
+    if (docsRemoved.length > 0) {
+        const removedPreview = docsRemoved.slice(0, 3).join(', ');
+        const removedSuffix = docsRemoved.length > 3 ? ` +${docsRemoved.length - 3} mas` : '';
+        summaryParts.push(`documentos -${docsRemoved.length}${removedPreview ? ` (${removedPreview}${removedSuffix})` : ''}`);
+    }
+
+    const header = `modificacion resumida (${changes.length} cambios)`;
+    return summaryParts.length > 0 ? `${header}: ${summaryParts.join(' | ')}` : header;
 }
 
 function toApiRow(row) {
@@ -1296,13 +1518,24 @@ function toFacturaSolicitudRow(row) {
 }
 
 function toHistoryRow(row) {
-    const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at);
+    const createdAt = toApiDateTimeLocal(row.created_at);
     const usuario = row.sucursal ? `${row.usuario_nombre} (${row.sucursal})` : row.usuario_nombre;
+    const editedAt = toApiDateTimeLocal(row.editado_at);
+    const editedByName = normalizeText(row.editado_por);
+    const editedByBranch = normalizeText(row.editado_por_sucursal);
+    const editedBy = editedByBranch ? `${editedByName} (${editedByBranch})` : editedByName;
+    const wasEdited = Number(row.editado || 0) === 1 || Boolean(editedAt) || Boolean(editedBy);
 
     return {
+        id: Number(row.id || 0),
+        numIngreso: row.num_ingreso || '',
+        accion: normalizeText(row.accion || ''),
         fecha: createdAt,
         comentario: row.comentario,
-        usuario: usuario || 'Sin usuario'
+        usuario: usuario || 'Sin usuario',
+        editado: wasEdited,
+        editadoPor: editedBy || '',
+        editadoEn: editedAt
     };
 }
 
@@ -1867,6 +2100,24 @@ function buildSmtpFromAddress(config) {
     return source.fromName ? `${source.fromName} <${source.fromEmail}>` : source.fromEmail;
 }
 
+function normalizeMailSubjectLine(value) {
+    return String(value || '')
+        .replace(/[\r\n]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeMailTextContent(value) {
+    return String(value || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\u0000/g, '')
+        .trim();
+}
+
+function normalizeMailHtmlContent(value) {
+    return String(value || '').replace(/\u0000/g, '').trim();
+}
+
 function getSmtpTransporter(config) {
     const runtimeConfig = toSmtpRuntimeConfig(config);
     if (!isSmtpConfigReady(runtimeConfig)) {
@@ -2049,7 +2300,10 @@ function requireWriteAccess(req, res, next) {
         return next();
     }
 
-    return res.status(401).json({ message: 'No autorizado para operaciones de escritura.' });
+    return res.status(401).json({
+        message: 'No autorizado para operaciones de escritura. Falta o es invalido el header X-API-Key.',
+        code: 'WRITE_API_KEY_REQUIRED'
+    });
 }
 
 function enforceAllowedOrigin(req, res, next) {
@@ -2313,11 +2567,18 @@ async function ensureRegistrosFacturaColumns() {
     await ensureColumn('registros', 'factura_monto', '`factura_monto` DECIMAL(14,2) NULL AFTER factura_observacion');
 }
 
+async function ensureHistoryEditColumns() {
+    await ensureColumn('registro_historial', 'editado', '`editado` TINYINT(1) NOT NULL DEFAULT 0 AFTER sucursal');
+    await ensureColumn('registro_historial', 'editado_por', '`editado_por` VARCHAR(120) NULL AFTER editado');
+    await ensureColumn('registro_historial', 'editado_por_sucursal', '`editado_por_sucursal` VARCHAR(120) NULL AFTER editado_por');
+    await ensureColumn('registro_historial', 'editado_at', '`editado_at` DATETIME NULL AFTER editado_por_sucursal');
+}
+
 async function ensureUsersRoleColumn() {
     await ensureColumn('usuarios', 'role', "`role` VARCHAR(20) NOT NULL DEFAULT 'OPERADOR' AFTER sucursal");
     await pool.query("UPDATE usuarios SET role = UPPER(role)");
     await pool.query(
-        "UPDATE usuarios SET role = 'OPERADOR' WHERE role IS NULL OR role = '' OR role NOT IN ('SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR')"
+        "UPDATE usuarios SET role = 'OPERADOR' WHERE role IS NULL OR role = '' OR role NOT IN ('SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR', 'SUPERVISOR')"
     );
 }
 
@@ -2430,6 +2691,10 @@ async function createHistoryTable() {
             comentario TEXT NOT NULL,
             usuario_nombre VARCHAR(120) NOT NULL,
             sucursal VARCHAR(120) NULL,
+            editado TINYINT(1) NOT NULL DEFAULT 0,
+            editado_por VARCHAR(120) NULL,
+            editado_por_sucursal VARCHAR(120) NULL,
+            editado_at DATETIME NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY idx_historial_registro_fecha (registro_id, created_at),
@@ -2468,6 +2733,31 @@ async function createFacturaSolicitudesTable() {
             KEY idx_factura_solicitudes_created_at (created_at),
             KEY idx_factura_solicitudes_num_ingreso (num_ingreso),
             KEY idx_factura_solicitudes_created_sucursal (created_by_sucursal)
+        )
+    `);
+}
+
+async function createRegistroDocumentAlertsTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS registro_documentos_alertas (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            registro_id INT UNSIGNED NOT NULL,
+            num_ingreso VARCHAR(20) NOT NULL,
+            sucursal VARCHAR(120) NULL,
+            documentos_agregados JSON NOT NULL,
+            created_by VARCHAR(120) NULL,
+            revisado TINYINT(1) NOT NULL DEFAULT 0,
+            revisado_por VARCHAR(120) NULL,
+            revisado_por_sucursal VARCHAR(120) NULL,
+            revisado_at DATETIME NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_doc_alertas_revisado_fecha (revisado, created_at),
+            KEY idx_doc_alertas_sucursal (sucursal),
+            KEY idx_doc_alertas_ingreso (num_ingreso),
+            CONSTRAINT fk_doc_alertas_registro_id FOREIGN KEY (registro_id) REFERENCES registros(id)
+                ON DELETE CASCADE
         )
     `);
 }
@@ -2766,21 +3056,27 @@ async function ensureAtLeastOnePrivilegedAccount() {
     const preferredRole = isPrivilegedRole(preferredPrivileged.role) ? preferredPrivileged.role : ROLE_ADMIN;
     const [existingRows] = await pool.execute('SELECT id FROM usuarios WHERE username = ? LIMIT 1', [preferredPrivileged.username]);
     if (existingRows.length > 0) {
-        await pool.execute('UPDATE usuarios SET role = ?, activo = 1, must_change_password = 0 WHERE id = ?', [
-            preferredRole,
-            existingRows[0].id
-        ]);
+        await pool.execute('UPDATE usuarios SET role = ?, activo = 1 WHERE id = ?', [preferredRole, existingRows[0].id]);
         console.warn(`Usuario ${preferredPrivileged.username} promovido a ${preferredRole} automaticamente.`);
         return;
     }
 
     const passwordData = createPasswordHash(preferredPrivileged.password);
+    const mustChangePassword = shouldForcePasswordChangeForRole(preferredRole) ? 1 : 0;
     await pool.execute(
         `
             INSERT INTO usuarios (username, nombre, sucursal, role, password_salt, password_hash, must_change_password, activo)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         `,
-        [preferredPrivileged.username, preferredPrivileged.nombre, preferredPrivileged.sucursal, preferredRole, passwordData.salt, passwordData.hash]
+        [
+            preferredPrivileged.username,
+            preferredPrivileged.nombre,
+            preferredPrivileged.sucursal,
+            preferredRole,
+            passwordData.salt,
+            passwordData.hash,
+            mustChangePassword
+        ]
     );
 
     console.warn(`Se creo usuario ${preferredRole} por seguridad: ${preferredPrivileged.username}. Cambia su contrasena.`);
@@ -2818,12 +3114,12 @@ async function ensureGuestUserAccount() {
                 role,
                 must_change_password,
                 activo
-            FROM usuarios
-            WHERE username = ?
-            LIMIT 1
-        `,
-        [GUEST_USERNAME]
-    );
+                FROM usuarios
+                WHERE LOWER(username) = ?
+                LIMIT 1
+            `,
+            [GUEST_USERNAME]
+        );
 
     if (!rows.length) {
         throw new Error('No fue posible inicializar el usuario invitado.');
@@ -2873,13 +3169,20 @@ async function fetchHistoryByRegistroId(registroId) {
     const [rows] = await pool.execute(
         `
             SELECT
+                id,
+                num_ingreso,
+                accion,
                 created_at,
                 comentario,
                 usuario_nombre,
-                sucursal
+                sucursal,
+                editado,
+                editado_por,
+                editado_por_sucursal,
+                editado_at
             FROM registro_historial
             WHERE registro_id = ?
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
         `,
         [registroId]
     );
@@ -2889,17 +3192,32 @@ async function fetchHistoryByRegistroId(registroId) {
 
 async function initDatabase() {
     const sanitizedDbName = cleanDbIdentifier(DB_NAME) || 'geo_rural';
-    const rootConnection = await mysql.createConnection({
+    const bootstrapConnection = await mysql.createConnection({
         host: DB_HOST,
         port: DB_PORT,
         user: DB_USER,
         password: DB_PASSWORD
     });
 
-    await rootConnection.query(
-        `CREATE DATABASE IF NOT EXISTS \`${sanitizedDbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
-    await rootConnection.end();
+    try {
+        await bootstrapConnection.query(
+            `CREATE DATABASE IF NOT EXISTS \`${sanitizedDbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+        );
+    } catch (error) {
+        const missingCreateDatabasePermission =
+            error &&
+            (error.code === 'ER_DBACCESS_DENIED_ERROR' || error.code === 'ER_SPECIFIC_ACCESS_DENIED_ERROR');
+
+        if (!missingCreateDatabasePermission) {
+            throw error;
+        }
+
+        console.warn(
+            `No se pudo crear automaticamente la base "${sanitizedDbName}" por permisos insuficientes. Se intentara continuar con una base existente.`
+        );
+    } finally {
+        await bootstrapConnection.end();
+    }
 
     pool = mysql.createPool({
         host: DB_HOST,
@@ -2964,7 +3282,9 @@ async function initDatabase() {
         await ensureUsersMustChangePasswordColumn();
         await createBranchesTable();
         await createHistoryTable();
+        await ensureHistoryEditColumns();
         await createFacturaSolicitudesTable();
+        await createRegistroDocumentAlertsTable();
         await createUtmMensualTable();
         await createCotizacionServiciosTable();
         await createCorreoConfiguracionTable();
@@ -3028,7 +3348,7 @@ app.post('/api/auth/login', async (req, res) => {
                     password_hash,
                     activo
                 FROM usuarios
-                WHERE username = ?
+                WHERE LOWER(username) = ?
                 LIMIT 1
             `,
             [username]
@@ -3058,11 +3378,18 @@ app.post('/api/auth/login', async (req, res) => {
         setSessionCookie(res, token);
         console.info(`[Auth] Sesion iniciada por ${rows[0].username}. IP=${getClientIp(req)}`);
 
-        return res.json({
+        const authUser = formatAuthUser(rows[0]);
+        const responsePayload = {
             token,
             expiresInHours: AUTH_SESSION_HOURS,
-            user: formatAuthUser(rows[0])
-        });
+            user: authUser
+        };
+
+        if (canReceiveWriteApiKey(authUser)) {
+            responsePayload.apiWriteKey = API_WRITE_KEY;
+        }
+
+        return res.json(responsePayload);
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'No fue posible iniciar sesion.' });
@@ -3091,10 +3418,11 @@ app.post('/api/auth/guest', async (req, res) => {
         setSessionCookie(res, token);
         console.info(`[Auth] Sesion invitado iniciada por ${guestUser.username}. IP=${getClientIp(req)}`);
 
+        const guestAuthUser = formatAuthUser(guestUser);
         return res.json({
             token,
             expiresInHours: AUTH_SESSION_HOURS,
-            user: formatAuthUser(guestUser)
+            user: guestAuthUser
         });
     } catch (error) {
         console.error(error);
@@ -3103,7 +3431,11 @@ app.post('/api/auth/guest', async (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, async (req, res) => {
-    return res.json({ user: req.authUser });
+    const responsePayload = { user: req.authUser };
+    if (canReceiveWriteApiKey(req.authUser)) {
+        responsePayload.apiWriteKey = API_WRITE_KEY;
+    }
+    return res.json(responsePayload);
 });
 
 app.post('/api/auth/logout', requireAuth, async (req, res) => {
@@ -3374,6 +3706,10 @@ app.post('/api/cotizaciones/enviar', async (req, res) => {
 
 app.get('/api/facturas/solicitudes', async (req, res) => {
     try {
+        if (!canUseInvoiceWorkflow(req.authUser)) {
+            return res.status(403).json({ message: 'Solo OPERADOR, SECRETARIA o SUPER pueden consultar solicitudes de factura.' });
+        }
+
         const estadoQuery = normalizeText(req.query.estado).toUpperCase();
         const limitRaw = Number(req.query.limit || 300);
         const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 300;
@@ -3441,6 +3777,10 @@ app.get('/api/facturas/solicitudes', async (req, res) => {
 
 app.get('/api/facturas/solicitudes/por-ingreso/:numIngreso', async (req, res) => {
     try {
+        if (!canUseInvoiceWorkflow(req.authUser)) {
+            return res.status(403).json({ message: 'Solo OPERADOR, SECRETARIA o SUPER pueden consultar solicitudes de factura.' });
+        }
+
         const numIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
         if (!parseNumIngreso(numIngreso)) {
             return res.status(400).json({ message: 'NRO INGRESO invalido.' });
@@ -3495,6 +3835,10 @@ app.get('/api/facturas/solicitudes/por-ingreso/:numIngreso', async (req, res) =>
 });
 
 app.post('/api/facturas/solicitudes', requireWriteAccess, async (req, res) => {
+    if (!canUseInvoiceWorkflow(req.authUser)) {
+        return res.status(403).json({ message: 'Solo OPERADOR, SECRETARIA o SUPER pueden gestionar solicitudes de factura.' });
+    }
+
     const connection = await pool.getConnection();
     try {
         const parsed = parseFacturaSolicitudPayload(req.body);
@@ -3713,6 +4057,10 @@ app.post('/api/facturas/solicitudes', requireWriteAccess, async (req, res) => {
 
 app.post('/api/facturas/solicitudes/marcar-enviadas', requireWriteAccess, async (req, res) => {
     try {
+        if (!canUseInvoiceWorkflow(req.authUser)) {
+            return res.status(403).json({ message: 'Solo OPERADOR, SECRETARIA o SUPER pueden marcar solicitudes como enviadas.' });
+        }
+
         const destinationEmail = normalizeText(req.body.destinationEmail).toLowerCase();
         if (!destinationEmail) {
             return res.status(400).json({ message: 'Debes ingresar el correo del contador.' });
@@ -3722,6 +4070,24 @@ app.post('/api/facturas/solicitudes/marcar-enviadas', requireWriteAccess, async 
         }
         if (exceedsMaxLength(destinationEmail, 255)) {
             return res.status(400).json({ message: 'El correo del contador excede el maximo permitido de 255 caracteres.' });
+        }
+
+        const rawNumIngresos = Array.isArray(req.body?.numIngresos) ? req.body.numIngresos : [];
+        const numIngresos = [];
+        for (const item of rawNumIngresos) {
+            const normalizedIngreso = normalizeText(item);
+            if (!normalizedIngreso) {
+                continue;
+            }
+            if (!parseNumIngreso(normalizedIngreso)) {
+                return res.status(400).json({ message: 'Uno de los NRO INGRESO enviados es invalido. Usa formato 123-2026.' });
+            }
+            if (!numIngresos.includes(normalizedIngreso)) {
+                numIngresos.push(normalizedIngreso);
+            }
+        }
+        if (rawNumIngresos.length > 0 && numIngresos.length === 0) {
+            return res.status(400).json({ message: 'Debes indicar al menos un NRO INGRESO valido para actualizar.' });
         }
 
         const userName = req.authUser.nombre || req.authUser.username;
@@ -3740,6 +4106,10 @@ app.post('/api/facturas/solicitudes/marcar-enviadas', requireWriteAccess, async 
         if (accessScope.clause) {
             where.push(accessScope.clause);
             values.push(...accessScope.params);
+        }
+        if (numIngresos.length > 0) {
+            where.push(`num_ingreso IN (${numIngresos.map(() => '?').join(', ')})`);
+            values.push(...numIngresos);
         }
 
         const [updateResult] = await pool.execute(
@@ -3768,6 +4138,75 @@ app.post('/api/facturas/solicitudes/marcar-enviadas', requireWriteAccess, async 
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'No fue posible actualizar las solicitudes pendientes.' });
+    }
+});
+
+app.post('/api/facturas/correo/enviar', requireWriteAccess, async (req, res) => {
+    try {
+        if (!canUseInvoiceWorkflow(req.authUser)) {
+            return res.status(403).json({ message: 'Solo OPERADOR, SECRETARIA o SUPER pueden enviar facturas por correo.' });
+        }
+
+        const smtpResolution = await resolveActiveSmtpConfiguration();
+        if (!smtpResolution.config) {
+            return res.status(503).json({
+                message: 'Envio no disponible: configura el servicio de correo (SMTP) en el menu del superusuario o variables de entorno.'
+            });
+        }
+
+        const destinationEmail = normalizeText(req.body?.destinationEmail).toLowerCase();
+        const subject = normalizeMailSubjectLine(req.body?.subject);
+        const textBody = normalizeMailTextContent(req.body?.textBody ?? req.body?.text);
+        const htmlBody = normalizeMailHtmlContent(req.body?.htmlBody ?? req.body?.html);
+
+        if (!destinationEmail) {
+            return res.status(400).json({ message: 'Debes ingresar el correo del contador.' });
+        }
+        if (!isValidEmail(destinationEmail)) {
+            return res.status(400).json({ message: 'El correo del contador no es valido.' });
+        }
+        if (exceedsMaxLength(destinationEmail, 255)) {
+            return res.status(400).json({ message: 'El correo del contador excede el maximo permitido de 255 caracteres.' });
+        }
+        if (!subject) {
+            return res.status(400).json({ message: 'Debes indicar el asunto del correo.' });
+        }
+        if (exceedsMaxLength(subject, 200)) {
+            return res.status(400).json({ message: 'El asunto del correo excede el maximo permitido de 200 caracteres.' });
+        }
+        if (!textBody && !htmlBody) {
+            return res.status(400).json({ message: 'Debes indicar el contenido del correo a enviar.' });
+        }
+        if (exceedsMaxLength(textBody, 200000)) {
+            return res.status(400).json({ message: 'El contenido de texto del correo excede el maximo permitido.' });
+        }
+        if (exceedsMaxLength(htmlBody, 400000)) {
+            return res.status(400).json({ message: 'El contenido HTML del correo excede el maximo permitido.' });
+        }
+
+        const transporter = getSmtpTransporter(smtpResolution.config);
+        if (!transporter) {
+            return res.status(503).json({
+                message: 'Envio no disponible: no fue posible inicializar configuracion SMTP.'
+            });
+        }
+
+        await transporter.sendMail({
+            from: buildSmtpFromAddress(smtpResolution.config),
+            to: destinationEmail,
+            subject,
+            text: textBody || undefined,
+            html: htmlBody || undefined
+        });
+
+        return res.json({
+            message: `Correo enviado correctamente a ${destinationEmail}.`,
+            destinationEmail,
+            subject
+        });
+    } catch (error) {
+        console.error('Error enviando factura por correo:', error);
+        return res.status(500).json({ message: 'No fue posible enviar la factura por correo.' });
     }
 });
 
@@ -3853,6 +4292,11 @@ app.put('/api/admin/sucursales/:branchId', requireAdmin, async (req, res) => {
 
         if (previousName && previousName !== nombre) {
             await connection.execute('UPDATE usuarios SET sucursal = ? WHERE sucursal = ?', [nombre, previousName]);
+            await connection.execute('UPDATE registros SET created_by_sucursal = ? WHERE created_by_sucursal = ?', [nombre, previousName]);
+            await connection.execute('UPDATE registros SET updated_by_sucursal = ? WHERE updated_by_sucursal = ?', [nombre, previousName]);
+            await connection.execute('UPDATE registro_historial SET sucursal = ? WHERE sucursal = ?', [nombre, previousName]);
+            await connection.execute('UPDATE factura_solicitudes SET created_by_sucursal = ? WHERE created_by_sucursal = ?', [nombre, previousName]);
+            await connection.execute('UPDATE factura_solicitudes SET updated_by_sucursal = ? WHERE updated_by_sucursal = ?', [nombre, previousName]);
         }
 
         await connection.commit();
@@ -3928,7 +4372,11 @@ app.get('/api/admin/usuarios', requireAdmin, async (req, res) => {
 
         const visibleRows = isSuperUser(req.authUser)
             ? rows
-            : rows.filter((row) => normalizeUserRole(row.role, ROLE_OPERADOR) !== ROLE_SUPER);
+            : rows.filter(
+                  (row) =>
+                      normalizeUserRole(row.role, ROLE_OPERADOR) !== ROLE_SUPER &&
+                      !isGuestUsername(row.username)
+              );
 
         const usuarios = visibleRows.map((row) => {
             const isGuest = isGuestUsername(row.username);
@@ -3964,6 +4412,9 @@ app.post('/api/admin/usuarios', requireAdmin, async (req, res) => {
         if (roleRaw && (role !== roleRaw || !assignableRoles.includes(role))) {
             return res.status(400).json({ message: `ROL invalido. Usa ${formatAssignableRolesLabel(req.authUser)}.` });
         }
+        if (role === ROLE_ADMIN && !isSuperUser(req.authUser)) {
+            return res.status(403).json({ message: 'Solo el superusuario puede crear usuarios con rol ADMIN.' });
+        }
 
         if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
             return res.status(400).json({ message: 'Usuario invalido. Usa 3-40 caracteres (a-z, 0-9, ., _, -).' });
@@ -3989,7 +4440,7 @@ app.post('/api/admin/usuarios', requireAdmin, async (req, res) => {
             return res.status(400).json({ message: 'Solo se permite una cuenta con rol SUPER en el sistema.' });
         }
 
-        const mustChangePassword = isPrivilegedRole(role) ? 0 : 1;
+        const mustChangePassword = shouldForcePasswordChangeForRole(role) ? 1 : 0;
         const passwordData = createPasswordHash(password);
         const [insertResult] = await pool.execute(
             `
@@ -4089,6 +4540,9 @@ app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
         }
 
         const currentRole = normalizeUserRole(targetRows[0].role, ROLE_OPERADOR);
+        if (role === ROLE_ADMIN && !isSuperUser(req.authUser) && currentRole !== ROLE_ADMIN) {
+            return res.status(403).json({ message: 'Solo el superusuario puede asignar el rol ADMIN.' });
+        }
         if (currentRole === ROLE_SUPER && !isSuperUser(req.authUser)) {
             return res.status(403).json({ message: 'Solo el superusuario puede editar otra cuenta SUPER.' });
         }
@@ -4109,13 +4563,13 @@ app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
         }
 
         let mustChangePassword = Number(targetRows[0].must_change_password || 0) === 1;
-        if (isPrivilegedRole(role)) {
+        if (role === ROLE_SUPER) {
             mustChangePassword = false;
         }
 
         if (password) {
             const passwordData = createPasswordHash(password);
-            mustChangePassword = isPrivilegedRole(role) ? false : true;
+            mustChangePassword = shouldForcePasswordChangeForRole(role);
             await pool.execute(
                 `
                     UPDATE usuarios
@@ -4133,7 +4587,7 @@ app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
                 [username, nombre, sucursal, role, passwordData.salt, passwordData.hash, mustChangePassword ? 1 : 0, userId]
             );
 
-            if (userId === req.authUser.id) {
+            if (Number(userId) === Number(req.authUser?.id)) {
                 await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ? AND id <> ?', [
                     userId,
                     req.authSessionId
@@ -4155,10 +4609,10 @@ app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
                 await pool.execute(
                     `
                         UPDATE usuarios
-                        SET username = ?, nombre = ?, sucursal = ?, role = ?, updated_at = NOW()
+                        SET username = ?, nombre = ?, sucursal = ?, role = ?, must_change_password = ?, updated_at = NOW()
                         WHERE id = ?
                     `,
-                    [username, nombre, sucursal, role, userId]
+                    [username, nombre, sucursal, role, mustChangePassword ? 1 : 0, userId]
                 );
             }
         }
@@ -4184,7 +4638,7 @@ app.put('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
     }
 });
 
-app.post('/api/admin/usuarios/:userId/guest-status', requireAdmin, async (req, res) => {
+app.post('/api/admin/usuarios/:userId/guest-status', requireSuper, async (req, res) => {
     try {
         const userId = Number(req.params.userId);
         if (!Number.isInteger(userId) || userId <= 0) {
@@ -4262,7 +4716,7 @@ app.post('/api/admin/usuarios/:userId/reset-password', requireAdmin, async (req,
             return res.status(403).json({ message: 'Solo el superusuario puede restablecer la clave de una cuenta SUPER.' });
         }
 
-        const mustChangePassword = isPrivilegedRole(targetRole) ? 0 : 1;
+        const mustChangePassword = shouldForcePasswordChangeForRole(targetRole) ? 1 : 0;
         const passwordData = createPasswordHash(newPassword);
         await pool.execute(
             `
@@ -4276,8 +4730,8 @@ app.post('/api/admin/usuarios/:userId/reset-password', requireAdmin, async (req,
         await pool.execute('UPDATE sesiones SET revoked_at = NOW() WHERE user_id = ?', [userId]);
 
         const message =
-            isPrivilegedRole(targetRole)
-                ? `Clave de cuenta privilegiada actualizada para ${targetRows[0].username}.`
+            targetRole === ROLE_SUPER
+                ? `Clave de cuenta SUPER actualizada para ${targetRows[0].username}.`
                 : `Clave temporal restablecida para ${targetRows[0].username}. Debe cambiarla al ingresar.`;
 
         return res.json({
@@ -4296,7 +4750,7 @@ app.delete('/api/admin/usuarios/:userId', requireAdmin, async (req, res) => {
             return res.status(400).json({ message: 'Identificador de usuario invalido.' });
         }
 
-        if (userId === req.authUser.id) {
+        if (Number(userId) === Number(req.authUser?.id)) {
             return res.status(400).json({ message: 'No puedes eliminar tu propio usuario.' });
         }
 
@@ -4731,6 +5185,11 @@ app.post('/api/registros', requireWriteAccess, async (req, res) => {
     payload.facturaMonto = parsedFacturaMonto.value;
 
     const authRole = normalizeUserRole(req.authUser?.role, ROLE_OPERADOR);
+    if (authRole === ROLE_SUPERVISOR) {
+        return res.status(403).json({
+            message: 'Tu rol solo puede buscar registros y agregar comentarios.'
+        });
+    }
     if (authRole === ROLE_OPERADOR) {
         return res.status(403).json({
             message: 'Tu rol no puede crear registros. Solo puedes agregar comentarios y actualizar documentacion recibida.'
@@ -4876,6 +5335,9 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
     }
 
     const authRole = normalizeUserRole(req.authUser?.role, ROLE_OPERADOR);
+    if (authRole === ROLE_SUPERVISOR) {
+        return res.status(403).json({ message: 'Tu rol solo puede buscar registros y agregar comentarios.' });
+    }
     const isOperatorLimitedEditor = authRole === ROLE_OPERADOR && !isGuestUser(req.authUser);
     if (isOperatorLimitedEditor) {
         // En OPERADOR, MODIFICAR solo aplica cambios de documentacion.
@@ -5109,6 +5571,22 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
             sucursal: userBranch
         });
 
+        if (docsAdded.length > 0) {
+            await connection.execute(
+                `
+                    INSERT INTO registro_documentos_alertas (
+                        registro_id,
+                        num_ingreso,
+                        sucursal,
+                        documentos_agregados,
+                        created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                `,
+                [existingRows[0].id, payload.numIngresoNuevo, userBranch, JSON.stringify(docsAdded), userName]
+            );
+        }
+
         await connection.commit();
         return res.json({ message: `Registro ${payload.numIngresoNuevo} modificado.`, numIngreso: payload.numIngresoNuevo });
     } catch (error) {
@@ -5209,6 +5687,165 @@ app.post('/api/registros/:numIngreso/comentario', requireWriteAccess, async (req
     }
 });
 
+app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, requireAdmin, async (req, res) => {
+    const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+    const parsedIngreso = parseNumIngreso(routeIngreso);
+    if (!parsedIngreso) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+    }
+
+    const historyIdRaw = Number(req.params.historyId);
+    const historyId = Number.isSafeInteger(historyIdRaw) ? historyIdRaw : NaN;
+    if (!Number.isInteger(historyId) || historyId <= 0) {
+        return res.status(400).json({ message: 'Identificador de comentario invalido.' });
+    }
+
+    const comentario = normalizeText(req.body.comentario);
+    if (!comentario) {
+        return res.status(400).json({ message: 'Debes ingresar un comentario para guardar.' });
+    }
+    if (exceedsMaxLength(comentario, 4000)) {
+        return res.status(400).json({ message: 'COMENTARIO excede el maximo permitido de 4000 caracteres.' });
+    }
+
+    const fechaSql = parseHistoryDateTimeInput(req.body.fecha);
+    if (!fechaSql) {
+        return res.status(400).json({ message: 'Fecha de comentario invalida. Usa formato YYYY-MM-DDTHH:mm.' });
+    }
+    const parsedEditedDate = new Date(String(req.body.fecha || '').replace(' ', 'T'));
+    if (Number.isNaN(parsedEditedDate.getTime())) {
+        return res.status(400).json({ message: 'Fecha de comentario invalida.' });
+    }
+    if (parsedEditedDate.getFullYear() < 2000) {
+        return res.status(400).json({ message: 'La fecha del comentario no puede ser anterior al ano 2000.' });
+    }
+    if (parsedEditedDate.getTime() > Date.now() + 5 * 60 * 1000) {
+        return res.status(400).json({ message: 'La fecha del comentario no puede estar en el futuro.' });
+    }
+
+    const registroScope = getRegistroAccessScope(req.authUser);
+    if (registroScope.denied) {
+        return res.status(403).json({ message: 'No tienes permisos para operar registros sin sucursal asignada.' });
+    }
+
+    const connection = await pool.getConnection();
+    const adminName = req.authUser.nombre || req.authUser.username;
+    const adminBranch = normalizeText(req.authUser.sucursal) || null;
+
+    try {
+        await connection.beginTransaction();
+
+        const recordScopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+        const [recordRows] = await connection.execute(
+            `
+                SELECT id, num_ingreso
+                FROM registros
+                WHERE num_ingreso = ?${recordScopeWhere}
+                FOR UPDATE
+            `,
+            [routeIngreso, ...registroScope.params]
+        );
+        if (!recordRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese registro para editar comentarios.' });
+        }
+
+        const registroId = Number(recordRows[0].id);
+        const [historyRows] = await connection.execute(
+            `
+                SELECT id, accion
+                FROM registro_historial
+                WHERE id = ? AND registro_id = ?
+                FOR UPDATE
+            `,
+            [historyId, registroId]
+        );
+        if (!historyRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese comentario en el historial.' });
+        }
+
+        const action = normalizeText(historyRows[0].accion).toUpperCase();
+        if (action !== 'COMENTARIO') {
+            await connection.rollback();
+            return res.status(400).json({ message: 'Solo se pueden editar entradas de tipo COMENTARIO.' });
+        }
+
+        await connection.execute(
+            `
+                UPDATE registro_historial
+                SET
+                    comentario = ?,
+                    created_at = ?,
+                    editado = 1,
+                    editado_por = ?,
+                    editado_por_sucursal = ?,
+                    editado_at = NOW()
+                WHERE id = ?
+            `,
+            [comentario, fechaSql, adminName, adminBranch, historyId]
+        );
+
+        const [latestCommentRows] = await connection.execute(
+            `
+                SELECT comentario
+                FROM registro_historial
+                WHERE registro_id = ? AND accion = 'COMENTARIO'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            `,
+            [registroId]
+        );
+        if (latestCommentRows.length > 0) {
+            await connection.execute(
+                `
+                    UPDATE registros
+                    SET
+                        comentario = ?,
+                        updated_by = ?,
+                        updated_by_sucursal = ?,
+                        updated_at = NOW()
+                    WHERE id = ?
+                `,
+                [normalizeText(latestCommentRows[0].comentario) || null, adminName, adminBranch, registroId]
+            );
+        }
+
+        const [updatedRows] = await connection.execute(
+            `
+                SELECT
+                    id,
+                    num_ingreso,
+                    accion,
+                    created_at,
+                    comentario,
+                    usuario_nombre,
+                    sucursal,
+                    editado,
+                    editado_por,
+                    editado_por_sucursal,
+                    editado_at
+                FROM registro_historial
+                WHERE id = ?
+                LIMIT 1
+            `,
+            [historyId]
+        );
+
+        await connection.commit();
+        return res.json({
+            message: 'Comentario de historial actualizado correctamente.',
+            historial: updatedRows.length > 0 ? toHistoryRow(updatedRows[0]) : null
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar el comentario del historial.' });
+    } finally {
+        connection.release();
+    }
+});
+
 app.delete('/api/registros/:numIngreso', requireWriteAccess, requireAdmin, async (req, res) => {
     const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
     const parsedIngreso = parseNumIngreso(routeIngreso);
@@ -5253,11 +5890,6 @@ app.get('/api/registros/sucursales-disponibles', async (req, res) => {
             return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para buscar registros.' });
         }
 
-        if (!hasBackofficeRegistroAccess(req.authUser) && !isGuestUser(req.authUser)) {
-            const branch = normalizeText(req.authUser && req.authUser.sucursal);
-            return res.json({ sucursales: branch ? [branch] : [] });
-        }
-
         const [catalogRows] = await pool.execute(
             `
                 SELECT nombre
@@ -5292,11 +5924,181 @@ app.get('/api/registros/sucursales-disponibles', async (req, res) => {
     }
 });
 
+app.get('/api/registros/seguimiento-sin-movimiento', async (req, res) => {
+    try {
+        if (!canUseSecretaryFeatures(req.authUser)) {
+            return res.status(403).json({ message: 'Solo SECRETARIA o SUPER pueden consultar este seguimiento.' });
+        }
+
+        const registroScope = getRegistroAccessScope(req.authUser, 'r');
+        if (registroScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para consultar este seguimiento.' });
+        }
+
+        const requestedDays = parsePositiveInt(req.query.dias, SECRETARIA_NO_MOVIMIENTO_DAYS);
+        const thresholdDays = Math.max(1, Math.min(requestedDays, 365));
+
+        const where = ['hstats.total_movimientos = 1', 'hstats.primer_movimiento_at <= DATE_SUB(NOW(), INTERVAL ? DAY)'];
+        const values = [thresholdDays];
+        if (registroScope.clause) {
+            where.push(registroScope.clause);
+            values.push(...registroScope.params);
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    r.num_ingreso,
+                    r.nombre,
+                    r.rut,
+                    r.region,
+                    r.comuna,
+                    COALESCE(r.updated_by_sucursal, r.created_by_sucursal, '') AS sucursal,
+                    hstats.primer_movimiento_at AS created_at,
+                    hstats.total_movimientos,
+                    TIMESTAMPDIFF(DAY, hstats.primer_movimiento_at, NOW()) AS dias_sin_movimiento
+                FROM registros r
+                INNER JOIN (
+                    SELECT
+                        registro_id,
+                        COUNT(*) AS total_movimientos,
+                        MIN(created_at) AS primer_movimiento_at
+                    FROM registro_historial
+                    GROUP BY registro_id
+                ) hstats
+                    ON hstats.registro_id = r.id
+                WHERE ${where.join(' AND ')}
+                ORDER BY dias_sin_movimiento DESC, hstats.primer_movimiento_at ASC, r.id ASC
+                LIMIT 500
+            `,
+            values
+        );
+
+        const registros = rows.map((row) => ({
+            numIngreso: row.num_ingreso,
+            nombre: row.nombre || '',
+            rut: row.rut || '',
+            region: row.region || '',
+            comuna: row.comuna || '',
+            sucursal: normalizeText(row.sucursal),
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
+            totalMovimientos: Number(row.total_movimientos || 0),
+            diasSinMovimiento: Number(row.dias_sin_movimiento || 0)
+        }));
+
+        return res.json({
+            thresholdDays,
+            registros
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar el seguimiento de registros sin movimiento.' });
+    }
+});
+
+app.get('/api/registros/documentos-alertas', async (req, res) => {
+    try {
+        if (!canUseOperatorDocumentAlerts(req.authUser)) {
+            return res.status(403).json({ message: 'Solo OPERADOR o SUPER pueden consultar esta lista.' });
+        }
+
+        const alertScope = getOperatorDocumentAlertsScope(req.authUser, 'a');
+        if (alertScope.denied) {
+            return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para consultar esta lista.' });
+        }
+
+        const where = ['a.revisado = 0'];
+        const values = [];
+        if (alertScope.clause) {
+            where.push(alertScope.clause);
+            values.push(...alertScope.params);
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    a.id,
+                    a.num_ingreso,
+                    a.sucursal,
+                    a.documentos_agregados,
+                    a.created_by,
+                    a.created_at
+                FROM registro_documentos_alertas a
+                WHERE ${where.join(' AND ')}
+                ORDER BY a.created_at DESC, a.id DESC
+                LIMIT 500
+            `,
+            values
+        );
+
+        const alertas = rows.map((row) => ({
+            id: Number(row.id),
+            numIngreso: normalizeText(row.num_ingreso),
+            sucursal: normalizeText(row.sucursal),
+            createdBy: normalizeText(row.created_by),
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
+            documentosAgregados: parseStoredDocumentList(row.documentos_agregados)
+        }));
+
+        return res.json({ alertas });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar alertas de documentos nuevos.' });
+    }
+});
+
+app.post('/api/registros/documentos-alertas/:alertId/revisar', requireWriteAccess, async (req, res) => {
+    const alertId = Number.parseInt(req.params.alertId, 10);
+    if (!Number.isInteger(alertId) || alertId <= 0) {
+        return res.status(400).json({ message: 'Identificador de alerta invalido.' });
+    }
+
+    if (!canUseOperatorDocumentAlerts(req.authUser)) {
+        return res.status(403).json({ message: 'Solo OPERADOR o SUPER pueden revisar esta lista.' });
+    }
+
+    const alertScope = getOperatorDocumentAlertsScope(req.authUser);
+    if (alertScope.denied) {
+        return res.status(403).json({ message: 'Tu usuario no tiene sucursal asignada para revisar esta lista.' });
+    }
+
+    const reviewedBy = req.authUser.nombre || req.authUser.username;
+    const reviewedByBranch = normalizeText(req.authUser.sucursal) || null;
+    const whereScopeClause = alertScope.clause ? ` AND ${alertScope.clause}` : '';
+
+    try {
+        const [updateResult] = await pool.execute(
+            `
+                UPDATE registro_documentos_alertas
+                SET
+                    revisado = 1,
+                    revisado_por = ?,
+                    revisado_por_sucursal = ?,
+                    revisado_at = NOW()
+                WHERE id = ?
+                  AND revisado = 0${whereScopeClause}
+            `,
+            [reviewedBy, reviewedByBranch, alertId, ...alertScope.params]
+        );
+
+        if (Number(updateResult?.affectedRows || 0) === 0) {
+            return res.status(404).json({ message: 'No se encontro ese item pendiente para revisar.' });
+        }
+
+        return res.json({ message: 'Item marcado como revisado.' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible marcar el item como revisado.' });
+    }
+});
+
 app.get('/api/registros/buscar-rango-fechas', async (req, res) => {
     try {
         const fechaDesde = normalizeText(req.query.fechaDesde);
         const fechaHasta = normalizeText(req.query.fechaHasta);
         const sucursal = normalizeText(req.query.sucursal);
+        const region = normalizeText(req.query.region);
+        const comuna = normalizeText(req.query.comuna);
         const registroScope = getRegistroAccessScope(req.authUser);
 
         if (registroScope.denied) {
@@ -5314,12 +6116,26 @@ app.get('/api/registros/buscar-rango-fechas', async (req, res) => {
         if (sucursal && exceedsMaxLength(sucursal, 120)) {
             return res.status(400).json({ message: 'Sucursal excede el largo maximo permitido.' });
         }
+        if (region && exceedsMaxLength(region, 120)) {
+            return res.status(400).json({ message: 'Region excede el largo maximo permitido.' });
+        }
+        if (comuna && exceedsMaxLength(comuna, 120)) {
+            return res.status(400).json({ message: 'Comuna excede el largo maximo permitido.' });
+        }
 
         const where = ['DATE(created_at) BETWEEN ? AND ?'];
         const values = [fechaDesde, fechaHasta];
         if (sucursal) {
             where.push('(created_by_sucursal = ? OR updated_by_sucursal = ?)');
             values.push(sucursal, sucursal);
+        }
+        if (region) {
+            where.push('region = ?');
+            values.push(region);
+        }
+        if (comuna) {
+            where.push('comuna = ?');
+            values.push(comuna);
         }
         if (registroScope.clause) {
             where.push(registroScope.clause);
@@ -5554,7 +6370,14 @@ async function start() {
         }
 
         await initDatabase();
-        app.listen(PORT, HOST, () => {
+        await new Promise((resolve, reject) => {
+            const server = app.listen(PORT, HOST, () => {
+                resolve(server);
+            });
+            server.on('error', reject);
+        });
+
+        {
             console.log(`Servidor activo en http://${HOST}:${PORT}`);
             console.log(`CORS habilitado para: ${ALLOWED_ORIGINS.join(', ')}`);
 
@@ -5563,7 +6386,7 @@ async function start() {
             } else {
                 console.warn('API_WRITE_KEY no configurada: operaciones POST/PUT sin token (solo recomendable en localhost).');
             }
-        });
+        }
     } catch (error) {
         console.error('No fue posible iniciar el servidor:', error.message);
         for (const hint of getStartupHints(error)) {

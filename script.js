@@ -6,7 +6,9 @@ const AUTH_TOKEN_STORAGE = 'geo_rural_auth_token';
 const API_KEY_STORAGE = 'geo_rural_api_key';
 const DOCUMENT_OPTIONS_STORAGE = 'geo_rural_document_options';
 const OPERATOR_LAST_DEST_EMAIL_STORAGE = 'geo_rural_last_invoice_destination_email';
-const APP_BUILD = '2026-03-23-04';
+const SECRETARY_DAILY_ALERT_STORAGE_PREFIX = 'geo_rural_secretary_no_movement_seen_';
+const SECRETARY_NO_MOVEMENT_DAYS = 8;
+const APP_BUILD = '2026-03-26-10';
 const MAIL_SEND_PROGRESS_MIN_MS = 1600;
 const MAIL_SEND_PROGRESS_FINAL_MS = 900;
 const REQUESTED_INVOICES_PAGE_SIZE = 5;
@@ -367,6 +369,7 @@ let suppressResetHandler = false;
 let adminIngresoMode = 'current';
 let appViewMode = 'registro';
 let editingAdminUserId = null;
+let editingAdminUserRole = '';
 let editingBranchId = null;
 let editingDocumentValue = '';
 let availableBranches = [];
@@ -374,13 +377,20 @@ let defaultDocumentOptions = [];
 let configuredDocumentOptions = [];
 let loadedRecordUnknownDocuments = [];
 let loadedComentarioOriginal = '';
+let loadedRegistroSnapshot = null;
 let authTokenMemory = '';
+let apiKeyMemory = '';
 let operatorPendingInvoices = [];
+let operatorDocumentAlerts = [];
 let requestedInvoicesHistory = [];
 let selectedRequestedInvoiceRequestId = '';
 let requestedInvoicesCurrentPage = 1;
 let currentInvoiceRequestStatus = '';
 let invoiceModalMode = '';
+let invoiceEmailPromptState = null;
+let editingHistoryEntryId = null;
+let editingHistoryIngreso = '';
+let secretaryNoMovementRecords = [];
 let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
 let dateRangeAvailableBranches = [];
@@ -393,8 +403,12 @@ let mailSendProgressOpenedAt = 0;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
 const REGISTRO_REQUIRED_FIELD_IDS = ['nombre', 'rut', 'region', 'comuna', 'rol'];
 const REGISTRO_INLINE_ERROR_FIELD_IDS = [...REGISTRO_REQUIRED_FIELD_IDS, 'correo', 'numLotes'];
+const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
+const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto'];
 const EXISTING_RECORD_SAVE_WARNING =
     'No se puede crear porque el registro ya existe. Si ha realizado cambios pulse en MODIFICAR para guardar los cambios.';
+const PENDING_MODIFY_REQUIRED_WARNING =
+    'Se detectaron cambios en el formulario o documentacion recibida. Favor guardar cambios pulsando el boton MODIFICAR.';
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.info(`[Geo Rural] Frontend build ${APP_BUILD}`);
@@ -446,6 +460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminToggleUsageBtn: document.getElementById('adminToggleUsageBtn'),
         secretariaViewInvoicesBtn: document.getElementById('secretariaViewInvoicesBtn'),
         secretariaQuotationBtn: document.getElementById('secretariaQuotationBtn'),
+        secretariaNoMovementBtn: document.getElementById('secretariaNoMovementBtn'),
         adminCreateUserBtn: document.getElementById('adminCreateUserBtn'),
         adminCancelEditBtn: document.getElementById('adminCancelEditBtn'),
         adminYearCurrentBtn: document.getElementById('adminYearCurrentBtn'),
@@ -504,6 +519,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         documentosContainer: document.getElementById('documentosContainer'),
         formMessage: document.getElementById('formMessage'),
         historialBody: document.getElementById('historialBody'),
+        historialActionHeader: document.getElementById('historialActionHeader'),
         facturaDataSection: document.getElementById('facturaDataSection'),
         facturaNombreRazon: document.getElementById('facturaNombreRazon'),
         facturaRut: document.getElementById('facturaRut'),
@@ -522,6 +538,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         btnModificar: document.querySelector('#registroForm .button-row .modificar'),
         btnBuscar: document.querySelector('#registroForm .button-row .buscar'),
         btnBuscarFecha: document.getElementById('buscarFechaBtn'),
+        operatorDocAlertsBtn: document.getElementById('operatorDocAlertsBtn'),
         btnEliminar: document.querySelector('#registroForm .button-row .eliminar'),
         btnLimpiar: document.querySelector('#registroForm .button-row .limpiar'),
         invoiceModalOverlay: document.getElementById('invoiceModalOverlay'),
@@ -591,11 +608,42 @@ document.addEventListener('DOMContentLoaded', async () => {
         mailSendProgressOverlay: document.getElementById('mailSendProgressOverlay'),
         mailSendProgressText: document.getElementById('mailSendProgressText'),
         mailSendProgressStatus: document.getElementById('mailSendProgressStatus'),
+        invoiceEmailPromptOverlay: document.getElementById('invoiceEmailPromptOverlay'),
+        invoiceEmailPromptInput: document.getElementById('invoiceEmailPromptInput'),
+        invoiceEmailPromptMessage: document.getElementById('invoiceEmailPromptMessage'),
+        invoiceEmailPromptCancelBtn: document.getElementById('invoiceEmailPromptCancelBtn'),
+        invoiceEmailPromptSendBtn: document.getElementById('invoiceEmailPromptSendBtn'),
+        historyEditModalOverlay: document.getElementById('historyEditModalOverlay'),
+        historyEditForm: document.getElementById('historyEditForm'),
+        historyEditFecha: document.getElementById('historyEditFecha'),
+        historyEditComentario: document.getElementById('historyEditComentario'),
+        historyEditMessage: document.getElementById('historyEditMessage'),
+        historyEditCancelBtn: document.getElementById('historyEditCancelBtn'),
+        historyEditSaveBtn: document.getElementById('historyEditSaveBtn'),
+        secretaryNoMovementOverlay: document.getElementById('secretaryNoMovementOverlay'),
+        secretaryNoMovementFilterForm: document.getElementById('secretaryNoMovementFilterForm'),
+        secretaryNoMovementFilterRegion: document.getElementById('secretaryNoMovementFilterRegion'),
+        secretaryNoMovementFilterComuna: document.getElementById('secretaryNoMovementFilterComuna'),
+        secretaryNoMovementFilterSucursal: document.getElementById('secretaryNoMovementFilterSucursal'),
+        secretaryNoMovementFilterFrom: document.getElementById('secretaryNoMovementFilterFrom'),
+        secretaryNoMovementFilterTo: document.getElementById('secretaryNoMovementFilterTo'),
+        secretaryNoMovementApplyBtn: document.getElementById('secretaryNoMovementApplyBtn'),
+        secretaryNoMovementClearBtn: document.getElementById('secretaryNoMovementClearBtn'),
+        secretaryNoMovementBody: document.getElementById('secretaryNoMovementBody'),
+        secretaryNoMovementMessage: document.getElementById('secretaryNoMovementMessage'),
+        secretaryNoMovementCloseBtn: document.getElementById('secretaryNoMovementCloseBtn'),
+        operatorDocAlertsOverlay: document.getElementById('operatorDocAlertsOverlay'),
+        operatorDocAlertsBody: document.getElementById('operatorDocAlertsBody'),
+        operatorDocAlertsMessage: document.getElementById('operatorDocAlertsMessage'),
+        operatorDocAlertsRefreshBtn: document.getElementById('operatorDocAlertsRefreshBtn'),
+        operatorDocAlertsCloseBtn: document.getElementById('operatorDocAlertsCloseBtn'),
         dateRangeModalOverlay: document.getElementById('dateRangeModalOverlay'),
         dateRangeForm: document.getElementById('dateRangeForm'),
         dateRangeFrom: document.getElementById('dateRangeFrom'),
         dateRangeTo: document.getElementById('dateRangeTo'),
         dateRangeSucursal: document.getElementById('dateRangeSucursal'),
+        dateRangeRegion: document.getElementById('dateRangeRegion'),
+        dateRangeComuna: document.getElementById('dateRangeComuna'),
         dateRangeResultsBody: document.getElementById('dateRangeResultsBody'),
         dateRangeMessage: document.getElementById('dateRangeMessage'),
         dateRangeAcceptBtn: document.getElementById('dateRangeAcceptBtn'),
@@ -618,6 +666,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     setFacturaContainerVisibility(false);
 
     populateRegiones(ui.region, 'Seleccione region');
+    populateRegiones(ui.dateRangeRegion, 'TODAS');
+    populateComunas(ui.dateRangeComuna, '', '', 'TODAS');
+    populateRegiones(ui.secretaryNoMovementFilterRegion, 'TODAS');
+    populateComunas(ui.secretaryNoMovementFilterComuna, '', '', 'TODAS');
+    populateSecretaryNoMovementBranchFilter([]);
     initializeSecretariaInvoiceDetailLocationSelectors();
     renderHistory([]);
     setFormMessage(ui.formMessage, '', '');
@@ -648,14 +701,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         ui.secretariaQuotationTemplateInfo.textContent = '';
     }
     setFormMessage(ui.mailSendProgressStatus, '', '');
+    setFormMessage(ui.invoiceEmailPromptMessage, '', '');
+    setFormMessage(ui.historyEditMessage, '', '');
+    setFormMessage(ui.secretaryNoMovementMessage, '', '');
+    setFormMessage(ui.operatorDocAlertsMessage, '', '');
     setFormMessage(ui.dateRangeMessage, '', '');
     initializeDocumentOptions();
     initializeOperatorBillingFeatures();
     registerRegistroRequiredFieldValidationListeners();
+    registerFacturaInlineValidationListeners();
 
     ui.region.addEventListener('change', () => {
         populateComunas(ui.comuna, ui.region.value);
     });
+    if (ui.dateRangeRegion && ui.dateRangeComuna) {
+        ui.dateRangeRegion.addEventListener('change', () => {
+            populateComunas(ui.dateRangeComuna, ui.dateRangeRegion.value, '', 'TODAS');
+        });
+    }
+    if (ui.secretaryNoMovementFilterRegion && ui.secretaryNoMovementFilterComuna) {
+        ui.secretaryNoMovementFilterRegion.addEventListener('change', () => {
+            populateComunas(
+                ui.secretaryNoMovementFilterComuna,
+                ui.secretaryNoMovementFilterRegion.value,
+                '',
+                'TODAS'
+            );
+            void applySecretaryNoMovementFilters();
+        });
+    }
 
     ui.loginForm.addEventListener('submit', handleLoginSubmit);
     if (ui.guestLoginBtn) {
@@ -710,6 +784,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.secretariaQuotationBtn) {
         ui.secretariaQuotationBtn.addEventListener('click', () => void handleOpenSecretariaQuotationModal());
+    }
+    if (ui.secretariaNoMovementBtn) {
+        ui.secretariaNoMovementBtn.addEventListener('click', () => void handleOpenSecretaryNoMovementModal());
+    }
+    if (ui.operatorDocAlertsBtn) {
+        ui.operatorDocAlertsBtn.addEventListener('click', () => void handleOpenOperatorDocumentAlertsModal());
     }
     ui.adminYearCurrentBtn.addEventListener('click', () => void handleAdminYearModeClick('current'));
     ui.adminYearPastBtn.addEventListener('click', () => void handleAdminYearModeClick('historical'));
@@ -777,6 +857,100 @@ document.addEventListener('DOMContentLoaded', async () => {
         ui.facturaEnviarPendientesBtn.addEventListener('click', handleSendPendingInvoicesByEmail);
     }
     registerInvoiceAutofillBindings();
+    if (ui.invoiceEmailPromptCancelBtn) {
+        ui.invoiceEmailPromptCancelBtn.addEventListener('click', cancelInvoiceEmailPrompt);
+    }
+    if (ui.invoiceEmailPromptSendBtn) {
+        ui.invoiceEmailPromptSendBtn.addEventListener('click', confirmInvoiceEmailPrompt);
+    }
+    if (ui.invoiceEmailPromptInput) {
+        ui.invoiceEmailPromptInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                confirmInvoiceEmailPrompt();
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelInvoiceEmailPrompt();
+            }
+        });
+    }
+    if (ui.invoiceEmailPromptOverlay) {
+        ui.invoiceEmailPromptOverlay.addEventListener('click', (event) => {
+            if (event.target === ui.invoiceEmailPromptOverlay) {
+                cancelInvoiceEmailPrompt();
+            }
+        });
+    }
+    if (ui.historyEditCancelBtn) {
+        ui.historyEditCancelBtn.addEventListener('click', closeHistoryEditModal);
+    }
+    if (ui.historyEditForm) {
+        ui.historyEditForm.addEventListener('submit', (event) => void handleHistoryEditSubmit(event));
+    }
+    if (ui.historyEditModalOverlay) {
+        ui.historyEditModalOverlay.addEventListener('click', (event) => {
+            if (event.target === ui.historyEditModalOverlay) {
+                closeHistoryEditModal();
+            }
+        });
+    }
+    if (ui.secretaryNoMovementCloseBtn) {
+        ui.secretaryNoMovementCloseBtn.addEventListener('click', closeSecretaryNoMovementModal);
+    }
+    if (ui.secretaryNoMovementOverlay) {
+        ui.secretaryNoMovementOverlay.addEventListener('click', (event) => {
+            if (event.target === ui.secretaryNoMovementOverlay) {
+                closeSecretaryNoMovementModal();
+            }
+        });
+    }
+    if (ui.operatorDocAlertsCloseBtn) {
+        ui.operatorDocAlertsCloseBtn.addEventListener('click', closeOperatorDocumentAlertsModal);
+    }
+    if (ui.operatorDocAlertsRefreshBtn) {
+        ui.operatorDocAlertsRefreshBtn.addEventListener('click', () => void refreshOperatorDocumentAlerts({ silent: false }));
+    }
+    if (ui.operatorDocAlertsOverlay) {
+        ui.operatorDocAlertsOverlay.addEventListener('click', (event) => {
+            if (event.target === ui.operatorDocAlertsOverlay) {
+                closeOperatorDocumentAlertsModal();
+            }
+        });
+    }
+    if (ui.secretaryNoMovementFilterForm) {
+        ui.secretaryNoMovementFilterForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            void applySecretaryNoMovementFilters();
+        });
+    }
+    if (ui.secretaryNoMovementClearBtn) {
+        ui.secretaryNoMovementClearBtn.addEventListener('click', () => {
+            resetSecretaryNoMovementFilters();
+            void applySecretaryNoMovementFilters();
+        });
+    }
+    if (ui.secretaryNoMovementFilterSucursal) {
+        ui.secretaryNoMovementFilterSucursal.addEventListener('change', () => {
+            void applySecretaryNoMovementFilters();
+        });
+    }
+    if (ui.secretaryNoMovementFilterComuna) {
+        ui.secretaryNoMovementFilterComuna.addEventListener('change', () => {
+            void applySecretaryNoMovementFilters();
+        });
+    }
+    if (ui.secretaryNoMovementFilterFrom) {
+        ui.secretaryNoMovementFilterFrom.addEventListener('change', () => {
+            void applySecretaryNoMovementFilters();
+        });
+    }
+    if (ui.secretaryNoMovementFilterTo) {
+        ui.secretaryNoMovementFilterTo.addEventListener('change', () => {
+            void applySecretaryNoMovementFilters();
+        });
+    }
 
     ui.btnGuardar.addEventListener('click', handleGuardar);
     ui.btnModificar.addEventListener('click', handleModificar);
@@ -1010,21 +1184,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    ui.btnLimpiar.addEventListener('click', () => {
-        requestAnimationFrame(() => {
-            setFormMessage(ui.formMessage, '', '');
-            renderHistory([]);
-            clearRegistroFieldErrors();
-            loadedIngresoOriginal = '';
-            loadedRecordUnknownDocuments = [];
-            loadedComentarioOriginal = '';
-            resetFacturaForm();
-            updateRegistroActionButtons();
-        });
+    const syncPendingLoadedChangesFromForm = () => {
+        syncPendingLoadedChangesInterlock({ canSearch: true, canClear: true });
+    };
+    ui.registroForm.addEventListener('input', syncPendingLoadedChangesFromForm);
+    ui.registroForm.addEventListener('change', syncPendingLoadedChangesFromForm);
+
+    ui.btnLimpiar.addEventListener('click', (event) => {
+        if (hasPendingLoadedRegistroChanges()) {
+            event.preventDefault();
+            showPendingModifyRequiredWarningPopup();
+            syncPendingLoadedChangesInterlock({ canSearch: true, canClear: true, forceWarningMessage: true });
+            return;
+        }
     });
 
-    ui.registroForm.addEventListener('reset', () => {
+    ui.registroForm.addEventListener('reset', (event) => {
         if (suppressResetHandler) {
+            return;
+        }
+        if (hasPendingLoadedRegistroChanges()) {
+            event.preventDefault();
+            showPendingModifyRequiredWarningPopup();
+            syncPendingLoadedChangesInterlock({ canSearch: true, canClear: true, forceWarningMessage: true });
             return;
         }
         requestAnimationFrame(async () => {
@@ -1038,6 +1220,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             renderHistory([]);
             loadedIngresoOriginal = '';
+            clearLoadedRegistroSnapshot();
             loadedRecordUnknownDocuments = [];
             loadedComentarioOriginal = '';
             resetFacturaForm();
@@ -1074,6 +1257,7 @@ async function handleLoginSubmit(event) {
         }
 
         setAuthToken(result.token || '');
+        setApiKey(result.apiWriteKey || '');
         ui.loginForm.reset();
         setFormMessage(ui.loginMessage, '', '');
         await activateAuthenticatedUser(result.user, { passwordMessage: '' });
@@ -1081,8 +1265,12 @@ async function handleLoginSubmit(event) {
         if (isAuthFailureError(error)) {
             clearAuthSession();
             currentUser = null;
+            setFormMessage(ui.loginMessage, 'Usuario o contrasena incorrectos.', 'error');
+            return;
         }
-        setFormMessage(ui.loginMessage, error.message, 'error');
+
+        const fallbackMessage = normalizeText(error?.message) || 'No fue posible iniciar sesion.';
+        setFormMessage(ui.loginMessage, fallbackMessage, 'error');
     }
 }
 
@@ -1098,6 +1286,7 @@ async function handleGuestLogin() {
         }
 
         setAuthToken(result.token || '');
+        setApiKey(result.apiWriteKey || '');
         ui.loginForm.reset();
         setFormMessage(ui.loginMessage, '', '');
         await activateAuthenticatedUser(result.user, { passwordMessage: '' });
@@ -1111,13 +1300,16 @@ async function handleGuestLogin() {
 }
 
 async function handleLogoutClick() {
-    try {
-        await apiRequest('/auth/logout', {
-            method: 'POST',
-            skipAuthRedirect: true
-        });
-    } catch (error) {
-        // Ignorar errores de red al cerrar sesion localmente.
+    const authToken = getAuthToken();
+    if (authToken) {
+        try {
+            await apiRequest('/auth/logout', {
+                method: 'POST',
+                skipAuthRedirect: true
+            });
+        } catch (error) {
+            // Ignorar errores de red/autorizacion al cerrar sesion localmente.
+        }
     }
 
     clearAuthSession();
@@ -1130,12 +1322,20 @@ async function handleLogoutClick() {
 }
 
 async function bootstrapSession() {
+    const token = getAuthToken();
+    if (!token) {
+        clearAuthSession();
+        showAuthCard('Inicia sesion para usar el sistema.');
+        return;
+    }
+
     try {
         const data = await apiRequest('/auth/me', { skipAuthRedirect: true });
         if (!data.user) {
             throw new Error('Sesion invalida.');
         }
 
+        setApiKey(data.apiWriteKey || '');
         await activateAuthenticatedUser(data.user, {
             passwordMessage: 'Debes cambiar tu clave para usar el sistema.'
         });
@@ -1172,6 +1372,7 @@ async function activateAuthenticatedUser(user, options = {}) {
     showAppForUser(currentUser);
     await loadNextIngreso(ui.numIngreso, ui.formMessage);
     renderHistory([]);
+    void maybeShowSecretaryNoMovementAlert(currentUser);
 }
 
 async function fetchMonthlyUtmStatusIfNeeded(user) {
@@ -1219,6 +1420,7 @@ function showAppForUser(user) {
     setFacturaContainerVisibility(canUseFacturaContainer(user));
     setComentarioVisibilityByUser(user);
     setGuestReadOnlyUiState(user);
+    syncOperatorDocumentAlertsButtonVisibility(user);
     void loadDateRangeBranches({ preserveSelection: false });
     setFormMessage(ui.facturaFormMessage, '', '');
     setFormMessage(ui.utmCaptureMessage, '', '');
@@ -1265,6 +1467,9 @@ function showAppForUser(user) {
         }
         if (ui.secretariaQuotationBtn) {
             ui.secretariaQuotationBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
+        }
+        if (ui.secretariaNoMovementBtn) {
+            ui.secretariaNoMovementBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
         }
         if (!canUseSecretaryFeatures(user)) {
             closeSecretariaInvoicesModal();
@@ -1334,6 +1539,9 @@ function showAppForUser(user) {
         if (ui.secretariaQuotationBtn) {
             ui.secretariaQuotationBtn.classList.add('hidden');
         }
+        if (ui.secretariaNoMovementBtn) {
+            ui.secretariaNoMovementBtn.classList.add('hidden');
+        }
 
         setOperatorBillingVisibility(canUseOperatorBilling(user));
         setAdminUsersVisibility(false);
@@ -1354,6 +1562,7 @@ function showAppForUser(user) {
         }
     }
 
+    void refreshOperatorDocumentAlerts({ silent: true });
     syncAdminRoleOptionsForCurrentUser();
     void refreshInvoiceRequestsCollections();
 }
@@ -1405,10 +1614,22 @@ function showAuthCard(message = '') {
     if (ui.secretariaQuotationBtn) {
         ui.secretariaQuotationBtn.classList.add('hidden');
     }
+    if (ui.secretariaNoMovementBtn) {
+        ui.secretariaNoMovementBtn.classList.add('hidden');
+    }
+    if (ui.operatorDocAlertsBtn) {
+        ui.operatorDocAlertsBtn.classList.add('hidden');
+        ui.operatorDocAlertsBtn.classList.remove('has-pending');
+        ui.operatorDocAlertsBtn.textContent = 'DOCS NUEVOS';
+    }
     setOperatorBillingVisibility(false);
     closeDateRangeModal();
     closeSecretariaInvoicesModal();
     closeSecretariaQuotationModal();
+    closeInvoiceEmailPrompt();
+    closeHistoryEditModal();
+    closeSecretaryNoMovementModal();
+    closeOperatorDocumentAlertsModal();
     if (ui.mailSendProgressOverlay) {
         ui.mailSendProgressOverlay.classList.add('hidden');
     }
@@ -1454,6 +1675,7 @@ function showAuthCard(message = '') {
     configureIngresoFieldByRole(null);
     updateRegistroActionButtons();
     operatorPendingInvoices = [];
+    operatorDocumentAlerts = [];
     requestedInvoicesHistory = [];
     selectedRequestedInvoiceRequestId = '';
     requestedInvoicesCurrentPage = 1;
@@ -1479,10 +1701,11 @@ function handleSessionExpired(message) {
     }
 
     suppressResetHandler = true;
-    ui.registroForm.reset();
+   ui.registroForm.reset();
     suppressResetHandler = false;
     renderHistory([]);
     loadedIngresoOriginal = '';
+    clearLoadedRegistroSnapshot();
     loadedRecordUnknownDocuments = [];
     loadedComentarioOriginal = '';
     resetFacturaForm();
@@ -1505,6 +1728,10 @@ function isSecretaryUser(user) {
 
 function isOperatorUser(user) {
     return normalizeUserRole(user?.role) === 'OPERADOR';
+}
+
+function isSupervisorUser(user) {
+    return normalizeUserRole(user?.role) === 'SUPERVISOR';
 }
 
 function canUseSecretaryFeatures(user) {
@@ -1539,8 +1766,16 @@ function canUseOperatorBilling(user) {
     return isOperatorUser(user) || isSuperUser(user);
 }
 
+function canUseOperatorDocumentAlerts(user) {
+    return canUseOperatorBilling(user) && !isGuestUser(user);
+}
+
 function canUseFacturaContainer(user) {
     return canUseSecretaryFeatures(user);
+}
+
+function canUseInvoiceWorkflow(user) {
+    return canUseOperatorBilling(user) || canUseFacturaContainer(user);
 }
 
 function canCreateRegistros(user) {
@@ -1548,6 +1783,10 @@ function canCreateRegistros(user) {
 }
 
 function canEditRegistros(user) {
+    return !isGuestUser(user) && !isSupervisorUser(user);
+}
+
+function canCommentRegistros(user) {
     return !isGuestUser(user);
 }
 
@@ -1561,6 +1800,9 @@ function normalizeUserRole(roleValue) {
     }
     if (role === 'SECRETARIA') {
         return 'SECRETARIA';
+    }
+    if (role === 'SUPERVISOR') {
+        return 'SUPERVISOR';
     }
     return 'OPERADOR';
 }
@@ -1610,7 +1852,7 @@ function shouldPlaceCommentsHistoryOnSidePanel(user) {
         return false;
     }
 
-    return isGuestUser(user) || isOperatorUser(user) || isAdminUser(user) || isSuperUser(user);
+    return isGuestUser(user) || isOperatorUser(user) || isAdminUser(user) || isSupervisorUser(user);
 }
 
 function applyCommentsHistoryPlacement(user) {
@@ -1656,6 +1898,7 @@ function setComentarioVisibilityByUser(user) {
 
 function setGuestReadOnlyUiState(user) {
     const isGuest = isGuestUser(user);
+    const isSupervisorRestricted = isSupervisorUser(user) && !isGuest;
     const isOperatorRestricted = isOperatorUser(user) && !isGuest;
     const hasLoadedRecord = Boolean(loadedIngresoOriginal);
     const actionButtons = [
@@ -1671,7 +1914,7 @@ function setGuestReadOnlyUiState(user) {
         if (!button) {
             return;
         }
-        button.disabled = isGuest;
+        button.disabled = isGuest || !canUseInvoiceWorkflow(user);
     });
     applyInvoiceSendButtonsState();
 
@@ -1680,6 +1923,7 @@ function setGuestReadOnlyUiState(user) {
     }
 
     const guestEditableFieldIds = hasLoadedRecord ? new Set() : new Set(['nombre', 'rut', 'rol']);
+    const supervisorEditableFieldIds = hasLoadedRecord ? new Set(['comentario']) : new Set(['nombre', 'rut', 'rol']);
     const operatorSearchFieldIds = new Set(['numIngreso', 'nombre', 'rut', 'rol']);
     const controls = ui.registroForm.querySelectorAll('input, select, textarea');
     controls.forEach((control) => {
@@ -1689,13 +1933,19 @@ function setGuestReadOnlyUiState(user) {
         }
 
         if (!isGuest) {
-            if (!isOperatorRestricted) {
+            if (!isSupervisorRestricted && !isOperatorRestricted) {
                 control.disabled = false;
                 return;
             }
 
             const controlId = String(control.id || '');
             const isDocumentCheckbox = type === 'checkbox' && String(control.name || '') === 'documentos';
+            if (isSupervisorRestricted) {
+                const canEditComentario = controlId === 'comentario' && hasLoadedRecord;
+                const canUseSearchField = supervisorEditableFieldIds.has(controlId) && !hasLoadedRecord;
+                control.disabled = !(canEditComentario || canUseSearchField);
+                return;
+            }
             const canEditComentario = controlId === 'comentario' && hasLoadedRecord;
             const canEditDocuments = isDocumentCheckbox && hasLoadedRecord;
             const canUseSearchField = operatorSearchFieldIds.has(controlId) && !hasLoadedRecord;
@@ -1708,7 +1958,7 @@ function setGuestReadOnlyUiState(user) {
         control.disabled = !guestEditableFieldIds.has(controlId);
     });
 
-    if (isGuest && ui.numIngreso) {
+    if ((isGuest || isSupervisorRestricted) && ui.numIngreso) {
         ui.numIngreso.readOnly = true;
     }
     if (isOperatorRestricted && ui.numIngreso) {
@@ -1726,7 +1976,7 @@ function isPasswordChangeRequired(user) {
 }
 
 function canUseQuickCommentSave(user) {
-    return canEditRegistros(user) && !isGuestUser(user);
+    return canCommentRegistros(user);
 }
 
 function updateQuickCommentButtonState() {
@@ -1763,6 +2013,95 @@ function hasAnyRegistroMainInputValue() {
     return Boolean(ui.documentosContainer.querySelector('input[name="documentos"]:checked'));
 }
 
+function normalizeRegistroSnapshotText(value) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function buildCurrentRegistroSnapshot() {
+    const selectedDocuments = Array.from(ui?.documentosContainer?.querySelectorAll('input[name="documentos"]:checked') || [])
+        .map((input) => String(input.value || '').trim())
+        .filter((value) => value.length > 0);
+    const retainedUnknownDocs = Array.isArray(loadedRecordUnknownDocuments) ? loadedRecordUnknownDocuments : [];
+    const documentos = Array.from(new Set([...selectedDocuments, ...retainedUnknownDocs]))
+        .map((value) => String(value || '').trim())
+        .filter((value) => value.length > 0)
+        .sort((left, right) => left.localeCompare(right, 'es'));
+
+    return {
+        numIngreso: normalizeRegistroSnapshotText(document.getElementById('numIngreso')?.value),
+        nombre: normalizeRegistroSnapshotText(document.getElementById('nombre')?.value),
+        rut: normalizeRegistroSnapshotText(document.getElementById('rut')?.value),
+        telefono: normalizeRegistroSnapshotText(document.getElementById('telefono')?.value),
+        correo: normalizeRegistroSnapshotText(document.getElementById('correo')?.value).toLowerCase(),
+        region: normalizeRegistroSnapshotText(document.getElementById('region')?.value),
+        comuna: normalizeRegistroSnapshotText(document.getElementById('comuna')?.value),
+        nombrePredio: normalizeRegistroSnapshotText(document.getElementById('nombrePredio')?.value),
+        rol: normalizeRegistroSnapshotText(document.getElementById('rol')?.value),
+        numLotes: normalizeRegistroSnapshotText(document.getElementById('numLotes')?.value),
+        estado: normalizeEstadoValue(document.getElementById('estado')?.value),
+        factura: {
+            nombreRazonSocial: normalizeRegistroSnapshotText(ui?.facturaNombreRazon?.value),
+            rut: normalizeRegistroSnapshotText(ui?.facturaRut?.value),
+            giro: normalizeRegistroSnapshotText(ui?.facturaGiro?.value),
+            direccion: normalizeRegistroSnapshotText(ui?.facturaDireccion?.value),
+            comuna: normalizeRegistroSnapshotText(ui?.facturaComuna?.value),
+            ciudad: normalizeRegistroSnapshotText(ui?.facturaCiudad?.value),
+            contacto: normalizeRegistroSnapshotText(ui?.facturaContacto?.value),
+            observacion: normalizeRegistroSnapshotText(ui?.facturaObservacion?.value),
+            montoFacturar: normalizeRegistroSnapshotText(ui?.facturaMonto?.value)
+        },
+        documentos
+    };
+}
+
+function saveLoadedRegistroSnapshot() {
+    loadedRegistroSnapshot = buildCurrentRegistroSnapshot();
+}
+
+function clearLoadedRegistroSnapshot() {
+    loadedRegistroSnapshot = null;
+}
+
+function hasPendingLoadedRegistroChanges() {
+    if (!loadedIngresoOriginal || !loadedRegistroSnapshot) {
+        return false;
+    }
+
+    const currentSnapshot = buildCurrentRegistroSnapshot();
+    return JSON.stringify(currentSnapshot) !== JSON.stringify(loadedRegistroSnapshot);
+}
+
+function syncPendingLoadedChangesInterlock({ canSearch = true, canClear = true, forceWarningMessage = false } = {}) {
+    const hasPendingLoadedChanges = Boolean(loadedIngresoOriginal) && hasPendingLoadedRegistroChanges();
+
+    if (ui?.btnBuscar) {
+        ui.btnBuscar.disabled = !(canSearch && !hasPendingLoadedChanges);
+    }
+    if (ui?.btnBuscarFecha) {
+        ui.btnBuscarFecha.disabled = !(canSearch && !hasPendingLoadedChanges);
+    }
+    if (ui?.btnLimpiar) {
+        ui.btnLimpiar.disabled = !(canClear && !hasPendingLoadedChanges);
+    }
+
+    const currentFormMessage = String(ui?.formMessage?.textContent || '').trim();
+    if (hasPendingLoadedChanges) {
+        if (forceWarningMessage || currentFormMessage !== PENDING_MODIFY_REQUIRED_WARNING) {
+            setFormMessage(ui?.formMessage, PENDING_MODIFY_REQUIRED_WARNING, 'error');
+        }
+    } else if (currentFormMessage === PENDING_MODIFY_REQUIRED_WARNING) {
+        setFormMessage(ui?.formMessage, '', '');
+    }
+
+    return hasPendingLoadedChanges;
+}
+
+function showPendingModifyRequiredWarningPopup() {
+    window.alert(PENDING_MODIFY_REQUIRED_WARNING);
+}
+
 function updateRegistroActionButtons() {
     if (!ui || !ui.btnGuardar || !ui.btnBuscar || !ui.btnModificar || !ui.btnLimpiar) {
         return;
@@ -1774,24 +2113,22 @@ function updateRegistroActionButtons() {
     const userCanCreate = canCreateRegistros(currentUser);
     const userCanModify = canEditRegistros(currentUser);
     const canSave = userCanCreate;
-    const canSearch = !hasLoadedRecord;
+    const canSearch = true;
+    const canClear = true;
     const canModify = userCanModify && hasLoadedRecord && hasFormData;
     const canDelete = hasLoadedRecord && userCanDelete;
 
-    ui.btnGuardar.classList.toggle('hidden', !userCanCreate);
+    ui.btnGuardar.classList.toggle('hidden', !userCanCreate || hasLoadedRecord);
     ui.btnModificar.classList.toggle('hidden', !userCanModify);
     ui.btnGuardar.disabled = !canSave;
-    ui.btnBuscar.disabled = !canSearch;
-    if (ui.btnBuscarFecha) {
-        ui.btnBuscarFecha.disabled = !canSearch;
-    }
     ui.btnModificar.disabled = !canModify;
     if (ui.btnEliminar) {
         ui.btnEliminar.classList.toggle('hidden', !userCanDelete);
         ui.btnEliminar.disabled = !canDelete;
     }
-    ui.btnLimpiar.disabled = false;
+    ui.btnLimpiar.disabled = !canClear;
     setGuestReadOnlyUiState(currentUser);
+    syncPendingLoadedChangesInterlock({ canSearch, canClear });
     updateQuickCommentButtonState();
 }
 
@@ -2366,7 +2703,7 @@ async function handleResendSecretariaInvoiceDetail() {
     }
 
     const currentEmail = normalizeInvoiceText(ui.secretariaInvoiceDetailDestinationEmail?.value, 255).toLowerCase();
-    const destinationEmail = promptAccountantEmail(currentEmail);
+    const destinationEmail = await promptAccountantEmail(currentEmail);
     if (destinationEmail === null) {
         return;
     }
@@ -2394,8 +2731,23 @@ async function handleResendSecretariaInvoiceDetail() {
     const subject = buildMailSubject(
         `Solicitud factura ${saveResult.data.numIngreso || ''} ${saveResult.data.nombreRazonSocial || ''}`.trim()
     );
-    const body = encodeURIComponent(buildSingleInvoiceEmailBody(saveResult.data));
-    window.location.href = `mailto:${encodeURIComponent(destinationEmail)}?subject=${subject}&body=${body}`;
+    showMailSendProgress('Enviando factura por correo...');
+    try {
+        await sendInvoiceEmailViaSmtp({
+            destinationEmail,
+            subject,
+            textBody: buildSingleInvoiceEmailBody(saveResult.data),
+            htmlBody: buildSingleInvoiceEmailHtml(saveResult.data)
+        });
+        await hideMailSendProgress('Correo enviado correctamente.', 'success');
+    } catch (error) {
+        await hideMailSendProgress('No fue posible enviar el correo.', 'error', {
+            minDurationMs: MAIL_SEND_PROGRESS_MIN_MS,
+            finalDurationMs: 1200
+        });
+        setFormMessage(ui.secretariaInvoiceDetailMessage, error.message, 'error');
+        return;
+    }
 
     await refreshRequestedInvoicesHistory({
         showErrors: true,
@@ -2993,6 +3345,12 @@ function closeDateRangeModal(options = {}) {
         if (ui && ui.dateRangeSucursal) {
             ui.dateRangeSucursal.value = '';
         }
+        if (ui && ui.dateRangeRegion) {
+            ui.dateRangeRegion.value = '';
+        }
+        if (ui && ui.dateRangeComuna) {
+            populateComunas(ui.dateRangeComuna, '', '', 'TODAS');
+        }
         renderDateRangeResults([]);
     }
 }
@@ -3052,6 +3410,7 @@ async function loadRegistroByIngreso(numIngreso, sourceLabel = 'base de datos') 
     const match = await apiRequest(`/registros/buscar?numIngreso=${encodeURIComponent(normalizedIngreso)}`);
     fillForm(ui.registroForm, match, ui.comuna);
     loadedIngresoOriginal = match.numIngreso || '';
+    saveLoadedRegistroSnapshot();
     await syncCurrentInvoiceRequestStatusByIngreso(loadedIngresoOriginal);
     renderHistory(isGuestUser(currentUser) ? [] : match.historial || []);
     updateRegistroActionButtons();
@@ -3077,8 +3436,8 @@ async function handleOpenDateRangeModal() {
         return;
     }
 
-    if (loadedIngresoOriginal) {
-        setFormMessage(ui.formMessage, 'Registro cargado. Presiona LIMPIAR para buscar otro.', 'error');
+    if (loadedIngresoOriginal && hasPendingLoadedRegistroChanges()) {
+        showPendingModifyRequiredWarningPopup();
         return;
     }
 
@@ -3089,6 +3448,12 @@ async function handleOpenDateRangeModal() {
     ui.dateRangeTo.value = ui.dateRangeTo.value || today;
     if (ui.dateRangeSucursal) {
         ui.dateRangeSucursal.value = '';
+    }
+    if (ui.dateRangeRegion) {
+        ui.dateRangeRegion.value = '';
+    }
+    if (ui.dateRangeComuna) {
+        populateComunas(ui.dateRangeComuna, '', '', 'TODAS');
     }
     setFormMessage(ui.dateRangeMessage, '', '');
     selectedDateRangeIngreso = '';
@@ -3107,6 +3472,8 @@ async function handleDateRangeSearch(event) {
     const fechaDesde = String(ui.dateRangeFrom.value || '').trim();
     const fechaHasta = String(ui.dateRangeTo.value || '').trim();
     const sucursal = String(ui.dateRangeSucursal?.value || '').trim();
+    const region = String(ui.dateRangeRegion?.value || '').trim();
+    const comuna = String(ui.dateRangeComuna?.value || '').trim();
     if (!isValidDateInputValue(fechaDesde) || !isValidDateInputValue(fechaHasta)) {
         setFormMessage(ui.dateRangeMessage, 'Ingresa un rango de fechas valido.', 'error');
         return;
@@ -3124,6 +3491,12 @@ async function handleDateRangeSearch(event) {
         });
         if (sucursal) {
             query.set('sucursal', sucursal);
+        }
+        if (region) {
+            query.set('region', region);
+        }
+        if (comuna) {
+            query.set('comuna', comuna);
         }
         const result = await apiRequest(`/registros/buscar-rango-fechas?${query.toString()}`);
         const registros = Array.isArray(result.registros) ? result.registros : [];
@@ -3148,8 +3521,8 @@ async function handleDateRangeAcceptSelection() {
         return;
     }
 
-    if (loadedIngresoOriginal) {
-        setFormMessage(ui.dateRangeMessage, 'Presiona LIMPIAR antes de cargar otro registro.', 'error');
+    if (loadedIngresoOriginal && hasPendingLoadedRegistroChanges()) {
+        showPendingModifyRequiredWarningPopup();
         return;
     }
 
@@ -3158,6 +3531,509 @@ async function handleDateRangeAcceptSelection() {
         closeDateRangeModal();
     } catch (error) {
         setFormMessage(ui.dateRangeMessage, error.message, 'error');
+    }
+}
+
+function getSecretaryNoMovementStorageKey(user) {
+    const userId = Number(user?.id);
+    if (Number.isInteger(userId) && userId > 0) {
+        return `${SECRETARY_DAILY_ALERT_STORAGE_PREFIX}${userId}`;
+    }
+
+    const username = normalizeInvoiceText(user?.username, 80).toLowerCase() || 'anonimo';
+    return `${SECRETARY_DAILY_ALERT_STORAGE_PREFIX}${username}`;
+}
+
+function getSecretaryNoMovementSeenDate(user) {
+    const storageKey = getSecretaryNoMovementStorageKey(user);
+    try {
+        return String(window.localStorage.getItem(storageKey) || '').trim();
+    } catch (error) {
+        return '';
+    }
+}
+
+function markSecretaryNoMovementSeenToday(user) {
+    const storageKey = getSecretaryNoMovementStorageKey(user);
+    const todayKey = toLocalDateInputValue(new Date());
+    try {
+        window.localStorage.setItem(storageKey, todayKey);
+    } catch (error) {
+        // Sin accion: no bloquear el flujo por storage.
+    }
+}
+
+function getSecretaryNoMovementRecordDateKey(value) {
+    if (!value) {
+        return '';
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return '';
+    }
+
+    return toLocalDateInputValue(parsed);
+}
+
+function populateSecretaryNoMovementBranchFilter(records, selectedValue = '') {
+    if (!ui?.secretaryNoMovementFilterSucursal) {
+        return;
+    }
+
+    const normalizedOptions = Array.from(
+        new Set(
+            (Array.isArray(records) ? records : [])
+                .map((item) => normalizeInvoiceText(item?.sucursal, 120))
+                .filter((item) => Boolean(item))
+        )
+    ).sort((left, right) => left.localeCompare(right, 'es'));
+
+    ui.secretaryNoMovementFilterSucursal.innerHTML = '<option value="">TODAS</option>';
+    normalizedOptions.forEach((branchName) => {
+        const option = document.createElement('option');
+        option.value = branchName;
+        option.textContent = branchName;
+        ui.secretaryNoMovementFilterSucursal.appendChild(option);
+    });
+
+    if (selectedValue && normalizedOptions.includes(selectedValue)) {
+        ui.secretaryNoMovementFilterSucursal.value = selectedValue;
+        return;
+    }
+
+    ui.secretaryNoMovementFilterSucursal.value = '';
+}
+
+function resetSecretaryNoMovementFilters() {
+    if (!ui) {
+        return;
+    }
+
+    if (ui.secretaryNoMovementFilterRegion) {
+        ui.secretaryNoMovementFilterRegion.value = '';
+    }
+    if (ui.secretaryNoMovementFilterComuna) {
+        populateComunas(ui.secretaryNoMovementFilterComuna, '', '', 'TODAS');
+    }
+    if (ui.secretaryNoMovementFilterFrom) {
+        ui.secretaryNoMovementFilterFrom.value = '';
+    }
+    if (ui.secretaryNoMovementFilterTo) {
+        ui.secretaryNoMovementFilterTo.value = '';
+    }
+    populateSecretaryNoMovementBranchFilter(secretaryNoMovementRecords);
+}
+
+function renderSecretaryNoMovementRows(records) {
+    if (!ui?.secretaryNoMovementBody) {
+        return;
+    }
+
+    ui.secretaryNoMovementBody.innerHTML = '';
+    if (!Array.isArray(records) || records.length === 0) {
+        ui.secretaryNoMovementBody.innerHTML = '<tr><td colspan="8">Sin registros pendientes para mostrar.</td></tr>';
+        return;
+    }
+
+    records.forEach((item) => {
+        const days = Number(item?.diasSinMovimiento);
+        const daysLabel = Number.isFinite(days) ? String(Math.max(0, Math.floor(days))) : '';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${escapeHtml(item?.numIngreso || '')}</td>
+            <td>${escapeHtml(formatDateTime(item?.createdAt || ''))}</td>
+            <td>${escapeHtml(daysLabel)}</td>
+            <td>${escapeHtml(item?.nombre || '')}</td>
+            <td>${escapeHtml(item?.rut || '')}</td>
+            <td>${escapeHtml(item?.sucursal || '')}</td>
+            <td>${escapeHtml(item?.region || '')}</td>
+            <td>${escapeHtml(item?.comuna || '')}</td>
+        `;
+        ui.secretaryNoMovementBody.appendChild(row);
+    });
+}
+
+function applySecretaryNoMovementFilters() {
+    if (!ui) {
+        return false;
+    }
+
+    const sourceRecords = Array.isArray(secretaryNoMovementRecords) ? secretaryNoMovementRecords : [];
+    const region = normalizeInvoiceText(ui.secretaryNoMovementFilterRegion?.value, 120);
+    const comuna = normalizeInvoiceText(ui.secretaryNoMovementFilterComuna?.value, 120);
+    const sucursal = normalizeInvoiceText(ui.secretaryNoMovementFilterSucursal?.value, 120);
+    const fechaDesde = String(ui.secretaryNoMovementFilterFrom?.value || '').trim();
+    const fechaHasta = String(ui.secretaryNoMovementFilterTo?.value || '').trim();
+
+    if (fechaDesde && !isValidDateInputValue(fechaDesde)) {
+        setFormMessage(ui.secretaryNoMovementMessage, 'La fecha DESDE es invalida.', 'error');
+        return false;
+    }
+    if (fechaHasta && !isValidDateInputValue(fechaHasta)) {
+        setFormMessage(ui.secretaryNoMovementMessage, 'La fecha HASTA es invalida.', 'error');
+        return false;
+    }
+    if (fechaDesde && fechaHasta && fechaDesde > fechaHasta) {
+        setFormMessage(ui.secretaryNoMovementMessage, 'La fecha DESDE no puede ser mayor que HASTA.', 'error');
+        return false;
+    }
+
+    const filteredRecords = sourceRecords.filter((item) => {
+        const itemRegion = normalizeInvoiceText(item?.region, 120);
+        const itemComuna = normalizeInvoiceText(item?.comuna, 120);
+        const itemSucursal = normalizeInvoiceText(item?.sucursal, 120);
+        const itemDate = getSecretaryNoMovementRecordDateKey(item?.createdAt);
+
+        if (region && itemRegion !== region) {
+            return false;
+        }
+        if (comuna && itemComuna !== comuna) {
+            return false;
+        }
+        if (sucursal && itemSucursal !== sucursal) {
+            return false;
+        }
+        if (fechaDesde && (!itemDate || itemDate < fechaDesde)) {
+            return false;
+        }
+        if (fechaHasta && (!itemDate || itemDate > fechaHasta)) {
+            return false;
+        }
+
+        return true;
+    });
+
+    renderSecretaryNoMovementRows(filteredRecords);
+    if (sourceRecords.length === 0) {
+        setFormMessage(ui.secretaryNoMovementMessage, 'No hay registros con 8 o mas dias y comentario unico.', 'success');
+        return true;
+    }
+
+    if (filteredRecords.length === 0) {
+        setFormMessage(
+            ui.secretaryNoMovementMessage,
+            `No hay registros que coincidan con los filtros. Pendientes totales: ${sourceRecords.length}.`,
+            'error'
+        );
+        return true;
+    }
+
+    setFormMessage(
+        ui.secretaryNoMovementMessage,
+        `Mostrando ${filteredRecords.length} de ${sourceRecords.length} registros pendientes.`,
+        'error'
+    );
+    return true;
+}
+
+function closeSecretaryNoMovementModal() {
+    if (ui?.secretaryNoMovementOverlay) {
+        ui.secretaryNoMovementOverlay.classList.add('hidden');
+    }
+}
+
+async function fetchSecretaryNoMovementRecords() {
+    const query = new URLSearchParams({
+        dias: String(SECRETARY_NO_MOVEMENT_DAYS)
+    });
+    const result = await apiRequest(`/registros/seguimiento-sin-movimiento?${query.toString()}`);
+    const records = Array.isArray(result?.registros) ? result.registros : [];
+    secretaryNoMovementRecords = records;
+    return records;
+}
+
+function openSecretaryNoMovementModal() {
+    if (!ui?.secretaryNoMovementOverlay) {
+        return;
+    }
+
+    resetSecretaryNoMovementFilters();
+    applySecretaryNoMovementFilters();
+    ui.secretaryNoMovementOverlay.classList.remove('hidden');
+    if (ui.secretaryNoMovementCloseBtn) {
+        window.requestAnimationFrame(() => {
+            ui.secretaryNoMovementCloseBtn.focus();
+        });
+    }
+}
+
+async function handleOpenSecretaryNoMovementModal() {
+    if (!canUseSecretaryFeatures(currentUser)) {
+        setFormMessage(ui.formMessage, 'Solo SECRETARIA o SUPER pueden ver este seguimiento.', 'error');
+        return;
+    }
+
+    try {
+        await fetchSecretaryNoMovementRecords();
+        openSecretaryNoMovementModal();
+    } catch (error) {
+        setFormMessage(ui.formMessage, error.message, 'error');
+    }
+}
+
+async function maybeShowSecretaryNoMovementAlert(user) {
+    if (!isSecretaryUser(user) || isGuestUser(user)) {
+        return;
+    }
+
+    const todayKey = toLocalDateInputValue(new Date());
+    if (getSecretaryNoMovementSeenDate(user) === todayKey) {
+        return;
+    }
+
+    try {
+        await fetchSecretaryNoMovementRecords();
+        markSecretaryNoMovementSeenToday(user);
+        if (!secretaryNoMovementRecords.length) {
+            return;
+        }
+        openSecretaryNoMovementModal();
+    } catch (error) {
+        // Evitar bloquear el ingreso por errores en esta alerta.
+        console.warn('[Geo Rural] No fue posible cargar seguimiento de registros sin movimiento.', error);
+    }
+}
+
+function getDocumentOptionLabelByValue(value) {
+    const normalizedValue = normalizeDocumentOptionValue(value);
+    if (!normalizedValue) {
+        return '';
+    }
+
+    const option = Array.isArray(configuredDocumentOptions)
+        ? configuredDocumentOptions.find((item) => normalizeDocumentOptionValue(item?.value) === normalizedValue)
+        : null;
+    if (option && option.label) {
+        return normalizeDocumentOptionLabel(option.label);
+    }
+
+    return normalizeDocumentOptionLabel(String(value || '').replace(/_/g, ' '));
+}
+
+function sanitizeOperatorDocumentAlertRecord(item) {
+    const alertId = Number(item?.id);
+    const docs = Array.isArray(item?.documentosAgregados) ? item.documentosAgregados : [];
+    const documentosAgregados = docs
+        .map((doc) => normalizeDocumentOptionValue(doc))
+        .filter((doc) => doc.length > 0);
+    return {
+        id: Number.isInteger(alertId) && alertId > 0 ? alertId : 0,
+        numIngreso: normalizeInvoiceText(item?.numIngreso, 20),
+        sucursal: normalizeInvoiceText(item?.sucursal, 120),
+        createdAt: String(item?.createdAt || ''),
+        documentosAgregados
+    };
+}
+
+function updateOperatorDocumentAlertsButtonState() {
+    if (!ui?.operatorDocAlertsBtn) {
+        return;
+    }
+
+    const pendingCount = Array.isArray(operatorDocumentAlerts) ? operatorDocumentAlerts.length : 0;
+    ui.operatorDocAlertsBtn.textContent = pendingCount > 0 ? `DOCS NUEVOS (${pendingCount})` : 'DOCS NUEVOS';
+    ui.operatorDocAlertsBtn.classList.toggle('has-pending', pendingCount > 0);
+}
+
+function syncOperatorDocumentAlertsButtonVisibility(user) {
+    if (!ui?.operatorDocAlertsBtn) {
+        return;
+    }
+
+    const canUseAlerts = canUseOperatorDocumentAlerts(user);
+    ui.operatorDocAlertsBtn.classList.toggle('hidden', !canUseAlerts);
+    if (!canUseAlerts) {
+        operatorDocumentAlerts = [];
+        updateOperatorDocumentAlertsButtonState();
+        closeOperatorDocumentAlertsModal();
+        return;
+    }
+
+    updateOperatorDocumentAlertsButtonState();
+}
+
+function renderOperatorDocumentAlertsRows(records) {
+    if (!ui?.operatorDocAlertsBody) {
+        return;
+    }
+
+    ui.operatorDocAlertsBody.innerHTML = '';
+    if (!Array.isArray(records) || records.length === 0) {
+        ui.operatorDocAlertsBody.innerHTML = '<tr><td colspan="5">Sin documentos nuevos por revisar.</td></tr>';
+        return;
+    }
+
+    records.forEach((item) => {
+        const row = document.createElement('tr');
+        const docs = Array.isArray(item?.documentosAgregados) ? item.documentosAgregados : [];
+        const docsListHtml =
+            docs.length > 0
+                ? `<ul class="operator-doc-alerts-doc-list">${docs
+                      .map((doc) => `<li>${escapeHtml(getDocumentOptionLabelByValue(doc) || doc)}</li>`)
+                      .join('')}</ul>`
+                : '<span>Sin detalle.</span>';
+
+        row.innerHTML = `
+            <td>${escapeHtml(item?.numIngreso || '')}</td>
+            <td>${escapeHtml(formatDateTime(item?.createdAt || ''))}</td>
+            <td>${escapeHtml(item?.sucursal || '')}</td>
+            <td>${docsListHtml}</td>
+            <td></td>
+        `;
+
+        const actionCell = row.lastElementChild;
+        const reviewLabel = document.createElement('label');
+        reviewLabel.className = 'operator-doc-alerts-review-label';
+        const reviewInput = document.createElement('input');
+        reviewInput.type = 'checkbox';
+        reviewInput.addEventListener('change', () => {
+            if (!reviewInput.checked) {
+                return;
+            }
+            void handleMarkOperatorDocumentAlertReviewed(Number(item?.id), reviewInput);
+        });
+        reviewLabel.appendChild(reviewInput);
+        reviewLabel.appendChild(document.createTextNode('Revisado'));
+        actionCell.appendChild(reviewLabel);
+
+        ui.operatorDocAlertsBody.appendChild(row);
+    });
+}
+
+function closeOperatorDocumentAlertsModal() {
+    if (ui?.operatorDocAlertsOverlay) {
+        ui.operatorDocAlertsOverlay.classList.add('hidden');
+    }
+}
+
+function openOperatorDocumentAlertsModal() {
+    if (!ui?.operatorDocAlertsOverlay) {
+        return;
+    }
+
+    renderOperatorDocumentAlertsRows(operatorDocumentAlerts);
+    if (operatorDocumentAlerts.length === 0) {
+        setFormMessage(ui.operatorDocAlertsMessage, 'Sin documentos nuevos por revisar.', 'success');
+    } else {
+        setFormMessage(
+            ui.operatorDocAlertsMessage,
+            `Pendientes por revisar: ${operatorDocumentAlerts.length}.`,
+            'success'
+        );
+    }
+    ui.operatorDocAlertsOverlay.classList.remove('hidden');
+    if (ui.operatorDocAlertsCloseBtn) {
+        window.requestAnimationFrame(() => {
+            ui.operatorDocAlertsCloseBtn.focus();
+        });
+    }
+}
+
+async function fetchOperatorDocumentAlerts() {
+    const result = await apiRequest('/registros/documentos-alertas');
+    const records = Array.isArray(result?.alertas) ? result.alertas : [];
+    operatorDocumentAlerts = records
+        .map((item) => sanitizeOperatorDocumentAlertRecord(item))
+        .filter((item) => item.id > 0);
+    updateOperatorDocumentAlertsButtonState();
+    return operatorDocumentAlerts;
+}
+
+async function refreshOperatorDocumentAlerts({ silent = true } = {}) {
+    if (!canUseOperatorDocumentAlerts(currentUser)) {
+        operatorDocumentAlerts = [];
+        updateOperatorDocumentAlertsButtonState();
+        renderOperatorDocumentAlertsRows([]);
+        return [];
+    }
+
+    try {
+        await fetchOperatorDocumentAlerts();
+        renderOperatorDocumentAlertsRows(operatorDocumentAlerts);
+        if (!silent) {
+            if (operatorDocumentAlerts.length === 0) {
+                setFormMessage(ui?.operatorDocAlertsMessage, 'Sin documentos nuevos por revisar.', 'success');
+            } else {
+                setFormMessage(
+                    ui?.operatorDocAlertsMessage,
+                    `Pendientes por revisar: ${operatorDocumentAlerts.length}.`,
+                    'success'
+                );
+            }
+        }
+        return operatorDocumentAlerts;
+    } catch (error) {
+        if (silent) {
+            console.warn('[Geo Rural] No fue posible actualizar alertas de documentos para operador.', error);
+            return [];
+        }
+        setFormMessage(ui?.operatorDocAlertsMessage, error.message, 'error');
+        throw error;
+    }
+}
+
+async function handleMarkOperatorDocumentAlertReviewed(alertId, inputElement) {
+    if (!canUseOperatorDocumentAlerts(currentUser)) {
+        setFormMessage(ui?.operatorDocAlertsMessage, 'Solo OPERADOR o SUPER pueden revisar esta lista.', 'error');
+        if (inputElement) {
+            inputElement.checked = false;
+        }
+        return;
+    }
+
+    if (!Number.isInteger(alertId) || alertId <= 0) {
+        setFormMessage(ui?.operatorDocAlertsMessage, 'No fue posible identificar el item seleccionado.', 'error');
+        if (inputElement) {
+            inputElement.checked = false;
+        }
+        return;
+    }
+
+    if (inputElement) {
+        inputElement.disabled = true;
+    }
+
+    try {
+        const result = await apiRequest(`/registros/documentos-alertas/${encodeURIComponent(alertId)}/revisar`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        });
+        operatorDocumentAlerts = operatorDocumentAlerts.filter((item) => Number(item?.id) !== alertId);
+        updateOperatorDocumentAlertsButtonState();
+        renderOperatorDocumentAlertsRows(operatorDocumentAlerts);
+        if (operatorDocumentAlerts.length === 0) {
+            setFormMessage(ui?.operatorDocAlertsMessage, 'Sin documentos nuevos por revisar.', 'success');
+        } else {
+            setFormMessage(
+                ui?.operatorDocAlertsMessage,
+                result?.message || `Item revisado. Pendientes: ${operatorDocumentAlerts.length}.`,
+                'success'
+            );
+        }
+    } catch (error) {
+        if (inputElement) {
+            inputElement.checked = false;
+        }
+        setFormMessage(ui?.operatorDocAlertsMessage, error.message, 'error');
+    } finally {
+        if (inputElement) {
+            inputElement.disabled = false;
+        }
+    }
+}
+
+async function handleOpenOperatorDocumentAlertsModal() {
+    if (!canUseOperatorDocumentAlerts(currentUser)) {
+        setFormMessage(ui?.formMessage, 'Solo OPERADOR o SUPER pueden ver esta lista.', 'error');
+        return;
+    }
+
+    try {
+        await refreshOperatorDocumentAlerts({ silent: false });
+        openOperatorDocumentAlertsModal();
+    } catch (error) {
+        setFormMessage(ui?.formMessage, error.message, 'error');
     }
 }
 
@@ -3357,9 +4233,12 @@ function formatInvoiceRequestStatus(status) {
 
 function applyInvoiceSendButtonsState() {
     const isGuest = isGuestUser(currentUser);
+    const canUseWorkflow = canUseInvoiceWorkflow(currentUser);
     const isSent = normalizeInvoiceRequestStatus(currentInvoiceRequestStatus) === 'ENVIADA';
-    const disableSend = isGuest || isSent;
+    const disableSend = isGuest || isSent || !canUseWorkflow;
+    const disableQueue = isGuest || isSent || !canUseWorkflow;
     const sendButtons = [ui?.operatorEmitInvoiceBtn, ui?.facturaEnviarContadorBtn];
+    const queueButtons = [ui?.operatorQueueInvoiceBtn, ui?.facturaAgregarListaBtn];
 
     sendButtons.forEach((button) => {
         if (!button) {
@@ -3367,8 +4246,30 @@ function applyInvoiceSendButtonsState() {
         }
 
         button.disabled = disableSend;
+        if (!canUseWorkflow && !isGuest) {
+            button.title = 'Tu rol no tiene permisos para gestionar facturas.';
+            return;
+        }
         if (isSent && !isGuest) {
             button.title = 'Esta factura ya fue enviada al contador.';
+            return;
+        }
+
+        button.removeAttribute('title');
+    });
+
+    queueButtons.forEach((button) => {
+        if (!button) {
+            return;
+        }
+
+        button.disabled = disableQueue;
+        if (!canUseWorkflow && !isGuest) {
+            button.title = 'Tu rol no tiene permisos para gestionar facturas.';
+            return;
+        }
+        if (isSent && !isGuest) {
+            button.title = 'Esta factura ya fue enviada al contador y no puede volver a lista pendiente.';
             return;
         }
 
@@ -3387,6 +4288,10 @@ function clearCurrentInvoiceRequestStatus() {
 
 async function syncCurrentInvoiceRequestStatusByIngreso(numIngreso, options = {}) {
     const normalizedIngreso = String(numIngreso || '').trim();
+    if (!canUseInvoiceWorkflow(currentUser)) {
+        clearCurrentInvoiceRequestStatus();
+        return;
+    }
     if (!normalizedIngreso || !/^\d+-\d{4}$/.test(normalizedIngreso)) {
         clearCurrentInvoiceRequestStatus();
         return;
@@ -3451,6 +4356,12 @@ async function fetchInvoiceRequests(estado = '', limit = 300) {
 }
 
 async function refreshOperatorPendingInvoices(options = {}) {
+    if (!canUseInvoiceWorkflow(currentUser)) {
+        operatorPendingInvoices = [];
+        renderOperatorPendingInvoices();
+        return false;
+    }
+
     const showErrors = options.showErrors === true;
     const targetMessage = options.messageElement || ui?.operatorInvoiceMessage || ui?.facturaFormMessage;
 
@@ -3468,6 +4379,14 @@ async function refreshOperatorPendingInvoices(options = {}) {
 }
 
 async function refreshRequestedInvoicesHistory(options = {}) {
+    if (!canUseSecretaryFeatures(currentUser)) {
+        requestedInvoicesHistory = [];
+        selectedRequestedInvoiceRequestId = '';
+        updateSecretariaInvoiceDetailButtonState();
+        renderRequestedInvoicesHistory();
+        return false;
+    }
+
     const showErrors = options.showErrors === true;
     const targetMessage = options.messageElement || ui?.secretariaInvoicesMessage;
     const previousSelectedId = selectedRequestedInvoiceRequestId;
@@ -3673,6 +4592,7 @@ function resetFacturaForm() {
             field.value = '';
         }
     });
+    clearFacturaFieldErrors();
     clearCurrentInvoiceRequestStatus();
     setFormMessage(ui.facturaFormMessage, '', '');
     syncFacturaFromMainForm();
@@ -3739,42 +4659,150 @@ function applyFacturaSnapshotToForm(factura) {
     }
 }
 
+function clearFacturaFieldErrors() {
+    FACTURA_INLINE_ERROR_FIELD_IDS.forEach((fieldId) => {
+        clearRegistroFieldError(fieldId);
+    });
+}
+
+function resolveFacturaFieldIdFromErrorMessage(message) {
+    const normalizedMessage = String(message || '').trim().toLowerCase();
+    if (!normalizedMessage) {
+        return '';
+    }
+    const compactMessage = normalizedMessage
+        .replace(/\s*\/\s*/g, '/')
+        .replace(/\s+/g, ' ');
+
+    if (compactMessage.includes('nombre/razon social') || compactMessage.includes('nombre o razon social')) {
+        return 'facturaNombreRazon';
+    }
+    if (compactMessage.includes('factura rut') || compactMessage.includes('rut invalido')) {
+        return 'facturaRut';
+    }
+    if (compactMessage.includes('giro')) {
+        return 'facturaGiro';
+    }
+    if (compactMessage.includes('direccion')) {
+        return 'facturaDireccion';
+    }
+    if (compactMessage.includes('factura comuna')) {
+        return 'facturaComuna';
+    }
+    if (compactMessage.includes('factura ciudad')) {
+        return 'facturaCiudad';
+    }
+    if (compactMessage.includes('factura contacto')) {
+        return 'facturaContacto';
+    }
+    if (compactMessage.includes('observacion')) {
+        return 'facturaObservacion';
+    }
+    if (compactMessage.includes('monto a facturar')) {
+        return 'facturaMonto';
+    }
+
+    return '';
+}
+
+function applyFacturaInlineErrorMessage(message, preferredFieldId = '') {
+    const normalizedMessage = String(message || '').trim();
+    if (!normalizedMessage) {
+        return false;
+    }
+
+    const preferred = String(preferredFieldId || '').trim();
+    const resolvedFieldId = FACTURA_INLINE_ERROR_FIELD_IDS.includes(preferred)
+        ? preferred
+        : resolveFacturaFieldIdFromErrorMessage(normalizedMessage);
+    if (!resolvedFieldId) {
+        return false;
+    }
+
+    setRegistroFieldError(resolvedFieldId, normalizedMessage);
+    const targetField = document.getElementById(resolvedFieldId);
+    if (targetField && typeof targetField.focus === 'function') {
+        targetField.focus();
+    }
+    return true;
+}
+
+function registerFacturaInlineValidationListeners() {
+    FACTURA_INLINE_ERROR_FIELD_IDS.forEach((fieldId) => {
+        const field = document.getElementById(fieldId);
+        if (!field) {
+            return;
+        }
+
+        const syncFieldErrorState = () => {
+            const value = String(field.value || '').trim();
+            if (!value) {
+                if (FACTURA_REQUIRED_FIELD_IDS.includes(fieldId)) {
+                    setRegistroFieldError(fieldId, 'Campo obligatorio.');
+                    return;
+                }
+                clearRegistroFieldError(fieldId);
+                return;
+            }
+
+            if (fieldId === 'facturaMonto' && !normalizeInvoiceAmount(value)) {
+                setRegistroFieldError(fieldId, 'Ingresa un MONTO A FACTURAR valido (mayor a 0).');
+                return;
+            }
+
+            clearRegistroFieldError(fieldId);
+        };
+
+        field.addEventListener('input', syncFieldErrorState);
+        field.addEventListener('change', syncFieldErrorState);
+        field.addEventListener('blur', syncFieldErrorState);
+    });
+}
+
 function validateInvoiceDraft(rawData, options = {}) {
     if (!rawData) {
-        return { error: 'No fue posible leer los datos de factura.', data: null };
+        return { error: 'No fue posible leer los datos de factura.', data: null, errorFieldId: '' };
     }
 
     const requireAmount = options.requireAmount !== false;
     const data = sanitizePendingInvoiceDraft(rawData);
     if (!data) {
-        return { error: 'Completa nombre/razon social y RUT para la factura.', data: null };
+        const nombreRazonSocial = normalizeInvoiceText(rawData?.nombreRazonSocial || rawData?.nombreCliente, 255);
+        const rut = normalizeInvoiceText(rawData?.rut || rawData?.rutCliente, 20);
+        if (!nombreRazonSocial) {
+            return { error: 'Completa NOMBRE / RAZON SOCIAL para la factura.', data: null, errorFieldId: 'facturaNombreRazon' };
+        }
+        if (!rut) {
+            return { error: 'Completa RUT para la factura.', data: null, errorFieldId: 'facturaRut' };
+        }
+        return { error: 'Completa nombre/razon social y RUT para la factura.', data: null, errorFieldId: 'facturaNombreRazon' };
     }
 
     if (!data.giro) {
-        return { error: 'Debes completar el GIRO para la factura.', data: null };
+        return { error: 'Debes completar el GIRO para la factura.', data: null, errorFieldId: 'facturaGiro' };
     }
 
     if (!data.direccion) {
-        return { error: 'Debes completar la DIRECCION para la factura.', data: null };
+        return { error: 'Debes completar la DIRECCION para la factura.', data: null, errorFieldId: 'facturaDireccion' };
     }
 
     if (!data.observacion) {
-        return { error: 'Debes completar la OBSERVACION para la factura.', data: null };
+        return { error: 'Debes completar la OBSERVACION para la factura.', data: null, errorFieldId: 'facturaObservacion' };
     }
 
     if (requireAmount && !data.montoFacturar) {
-        return { error: 'Ingresa un MONTO A FACTURAR valido (mayor a 0).', data: null };
+        return { error: 'Ingresa un MONTO A FACTURAR valido (mayor a 0).', data: null, errorFieldId: 'facturaMonto' };
     }
 
     if (!data.numIngreso) {
-        return { error: 'Debes cargar un registro con NRO INGRESO antes de enviar o agregar factura.', data: null };
+        return { error: 'Debes cargar un registro con NRO INGRESO antes de enviar o agregar factura.', data: null, errorFieldId: '' };
     }
 
     if (!/^\d+-\d{4}$/.test(data.numIngreso)) {
-        return { error: 'NRO INGRESO invalido. Usa formato 123-2026.', data: null };
+        return { error: 'NRO INGRESO invalido. Usa formato 123-2026.', data: null, errorFieldId: '' };
     }
 
-    return { error: '', data };
+    return { error: '', data, errorFieldId: '' };
 }
 
 function getLastInvoiceDestinationEmail() {
@@ -3793,35 +4821,276 @@ function persistLastInvoiceDestinationEmail(email) {
     }
 }
 
-function promptAccountantEmail(preferredEmail = '') {
+function closeInvoiceEmailPrompt(resolvedEmail = null) {
+    if (ui?.invoiceEmailPromptOverlay) {
+        ui.invoiceEmailPromptOverlay.classList.add('hidden');
+    }
+    if (ui?.invoiceEmailPromptInput) {
+        ui.invoiceEmailPromptInput.value = '';
+    }
+    setFormMessage(ui?.invoiceEmailPromptMessage, '', '');
+
+    if (!invoiceEmailPromptState) {
+        return;
+    }
+
+    const pendingPrompt = invoiceEmailPromptState;
+    invoiceEmailPromptState = null;
+    pendingPrompt.resolve(resolvedEmail);
+}
+
+function cancelInvoiceEmailPrompt() {
+    closeInvoiceEmailPrompt(null);
+}
+
+function confirmInvoiceEmailPrompt() {
+    if (!invoiceEmailPromptState) {
+        return;
+    }
+
+    const destinationEmail = normalizeInvoiceText(ui?.invoiceEmailPromptInput?.value, 255).toLowerCase();
+    if (!destinationEmail) {
+        setFormMessage(ui?.invoiceEmailPromptMessage, 'Debes ingresar el correo del contador.', 'error');
+        if (ui?.invoiceEmailPromptInput) {
+            ui.invoiceEmailPromptInput.focus();
+        }
+        return;
+    }
+    if (!isValidEmail(destinationEmail)) {
+        setFormMessage(ui?.invoiceEmailPromptMessage, 'El correo del contador no es valido.', 'error');
+        if (ui?.invoiceEmailPromptInput) {
+            ui.invoiceEmailPromptInput.focus();
+            ui.invoiceEmailPromptInput.select();
+        }
+        return;
+    }
+
+    persistLastInvoiceDestinationEmail(destinationEmail);
+    closeInvoiceEmailPrompt(destinationEmail);
+}
+
+function openInvoiceEmailPrompt(defaultEmail = '') {
+    if (!ui?.invoiceEmailPromptOverlay || !ui?.invoiceEmailPromptInput) {
+        return Promise.resolve(null);
+    }
+
+    if (invoiceEmailPromptState) {
+        invoiceEmailPromptState.resolve(null);
+        invoiceEmailPromptState = null;
+    }
+
+    const normalizedEmail = normalizeInvoiceText(defaultEmail, 255).toLowerCase();
+    ui.invoiceEmailPromptInput.value = normalizedEmail;
+    setFormMessage(ui?.invoiceEmailPromptMessage, '', '');
+    ui.invoiceEmailPromptOverlay.classList.remove('hidden');
+    window.requestAnimationFrame(() => {
+        ui.invoiceEmailPromptInput.focus();
+        ui.invoiceEmailPromptInput.select();
+    });
+
+    return new Promise((resolve) => {
+        invoiceEmailPromptState = { resolve };
+    });
+}
+
+async function promptAccountantEmail(preferredEmail = '') {
     const normalizedPreferred = normalizeInvoiceText(preferredEmail, 255).toLowerCase();
     const suggestedEmail = normalizedPreferred || getLastInvoiceDestinationEmail();
+
+    if (ui?.invoiceEmailPromptOverlay && ui?.invoiceEmailPromptInput) {
+        return openInvoiceEmailPrompt(suggestedEmail);
+    }
+
     const destinationInput = window.prompt('Ingresa el correo del contador:', suggestedEmail || '');
     if (destinationInput === null) {
         return null;
     }
-
     const destinationEmail = normalizeInvoiceText(destinationInput, 255).toLowerCase();
     if (!destinationEmail) {
         return '';
     }
-
     if (!isValidEmail(destinationEmail)) {
         return 'INVALID_EMAIL';
     }
-
     persistLastInvoiceDestinationEmail(destinationEmail);
     return destinationEmail;
 }
 
 function buildMailSubject(value) {
-    const normalized = String(value || '')
+    return String(value || '')
         .replace(/[\r\n]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .replace(/([)\]\d])r$/i, '$1');
+}
 
-    return encodeURIComponent(normalized);
+function toEmailHtmlMultiline(value) {
+    return escapeHtml(String(value || '-')).replace(/\r\n|\r|\n/g, '<br>');
+}
+
+function buildInvoiceDetailHtmlRows(item) {
+    return buildInvoiceDetailTableRows(item)
+        .map(([label, value]) => {
+            return `
+                <tr>
+                    <td style="width: 230px; padding: 8px 10px; border: 1px solid #d8e0ee; background: #eef3fb; font-weight: 700; color: #22365f;">
+                        ${escapeHtml(label)}
+                    </td>
+                    <td style="padding: 8px 10px; border: 1px solid #d8e0ee; color: #10213f;">
+                        ${toEmailHtmlMultiline(value)}
+                    </td>
+                </tr>
+            `.trim();
+        })
+        .join('');
+}
+
+function buildInvoiceEmailCardHtml(title, summaryRowsHtml, contentHtml) {
+    return `
+        <!doctype html>
+        <html lang="es">
+            <body style="margin:0;padding:16px;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#10213f;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:920px;margin:0 auto;background:#ffffff;border:1px solid #d2dced;border-radius:10px;overflow:hidden;">
+                    <tr>
+                        <td style="padding:16px 18px;background:#d7e4f7;border-bottom:1px solid #c2d4ee;">
+                            <h2 style="margin:0;font-size:20px;line-height:1.3;color:#163463;">${escapeHtml(title)}</h2>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:14px 18px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                                ${summaryRowsHtml}
+                            </table>
+                            ${contentHtml}
+                        </td>
+                    </tr>
+                </table>
+            </body>
+        </html>
+    `.trim();
+}
+
+function buildSingleInvoiceEmailHtml(item) {
+    const nowText = new Date().toLocaleString('es-CL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const operatorName = currentUser?.nombre || currentUser?.username || 'Operador';
+    const branch = currentUser?.sucursal || 'Sin sucursal';
+    const summaryRowsHtml = `
+        <tr>
+            <td style="padding:0 0 6px;font-weight:700;color:#22365f;">Fecha</td>
+            <td style="padding:0 0 6px;">${escapeHtml(nowText)}</td>
+        </tr>
+        <tr>
+            <td style="padding:0 0 6px;font-weight:700;color:#22365f;">Operador</td>
+            <td style="padding:0 0 6px;">${escapeHtml(operatorName)}</td>
+        </tr>
+        <tr>
+            <td style="padding:0 0 12px;font-weight:700;color:#22365f;">Sucursal</td>
+            <td style="padding:0 0 12px;">${escapeHtml(branch)}</td>
+        </tr>
+    `.trim();
+    const detailRowsHtml = buildInvoiceDetailHtmlRows(item);
+    const contentHtml = `
+        <div style="margin-top:2px;padding-top:8px;">
+            <h3 style="margin:0 0 10px;font-size:16px;color:#163463;">Detalle de factura</h3>
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                ${detailRowsHtml}
+            </table>
+        </div>
+    `.trim();
+
+    return buildInvoiceEmailCardHtml('Solicitud de facturacion', summaryRowsHtml, contentHtml);
+}
+
+function buildPendingInvoicesEmailHtml(items = operatorPendingInvoices) {
+    const normalizedItems = Array.isArray(items) ? items.filter((item) => Boolean(item)) : [];
+    const nowText = new Date().toLocaleString('es-CL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const operatorName = currentUser?.nombre || currentUser?.username || 'Operador';
+    const branch = currentUser?.sucursal || 'Sin sucursal';
+
+    const summaryRowsHtml = `
+        <tr>
+            <td style="padding:0 0 6px;font-weight:700;color:#22365f;">Fecha</td>
+            <td style="padding:0 0 6px;">${escapeHtml(nowText)}</td>
+        </tr>
+        <tr>
+            <td style="padding:0 0 6px;font-weight:700;color:#22365f;">Operador</td>
+            <td style="padding:0 0 6px;">${escapeHtml(operatorName)}</td>
+        </tr>
+        <tr>
+            <td style="padding:0 0 6px;font-weight:700;color:#22365f;">Sucursal</td>
+            <td style="padding:0 0 6px;">${escapeHtml(branch)}</td>
+        </tr>
+        <tr>
+            <td style="padding:0 0 12px;font-weight:700;color:#22365f;">Total pendientes</td>
+            <td style="padding:0 0 12px;">${escapeHtml(String(normalizedItems.length))}</td>
+        </tr>
+    `.trim();
+
+    const summaryTableRowsHtml = normalizedItems
+        .map((item, index) => {
+            return `
+                <tr>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;text-align:center;">${escapeHtml(String(index + 1))}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.numIngreso || '-')}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.nombreRazonSocial || '-')}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(formatInvoiceAmount(item.montoFacturar))}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.contacto || '-')}</td>
+                </tr>
+            `.trim();
+        })
+        .join('');
+
+    const detailSectionsHtml = normalizedItems
+        .map((item, index) => {
+            return `
+                <div style="margin-top:14px;">
+                    <h4 style="margin:0 0 8px;font-size:14px;color:#163463;">Factura ${escapeHtml(String(index + 1))}</h4>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                        ${buildInvoiceDetailHtmlRows(item)}
+                    </table>
+                </div>
+            `.trim();
+        })
+        .join('');
+
+    const contentHtml = `
+        <div style="margin-top:2px;padding-top:8px;">
+            <h3 style="margin:0 0 10px;font-size:16px;color:#163463;">Resumen de facturas pendientes</h3>
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:center;">#</th>
+                        <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">NRO INGRESO</th>
+                        <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CLIENTE / RAZON SOCIAL</th>
+                        <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">MONTO</th>
+                        <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CONTACTO</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${summaryTableRowsHtml}
+                </tbody>
+            </table>
+            ${detailSectionsHtml}
+        </div>
+    `.trim();
+
+    return buildInvoiceEmailCardHtml('Resumen de facturas pendientes', summaryRowsHtml, contentHtml);
 }
 
 function normalizeEmailTableValue(value, maxLength = 120) {
@@ -3912,7 +5181,8 @@ function buildSingleInvoiceEmailBody(item) {
     return lines.join('\n');
 }
 
-function buildPendingInvoicesEmailBody() {
+function buildPendingInvoicesEmailBody(items = operatorPendingInvoices) {
+    const normalizedItems = Array.isArray(items) ? items.filter((item) => Boolean(item)) : [];
     const nowText = new Date().toLocaleString('es-CL', {
         year: 'numeric',
         month: '2-digit',
@@ -3930,12 +5200,12 @@ function buildPendingInvoicesEmailBody() {
         `Fecha: ${nowText}`,
         `Operador: ${operatorName}`,
         `Sucursal: ${branch}`,
-        `Total pendientes: ${operatorPendingInvoices.length}`,
+        `Total pendientes: ${normalizedItems.length}`,
         '',
         'RESUMEN',
         buildReadableTextTable(
             ['#', 'NRO INGRESO', 'CLIENTE / RAZON SOCIAL', 'MONTO', 'CONTACTO'],
-            operatorPendingInvoices.map((item, index) => [
+            normalizedItems.map((item, index) => [
                 String(index + 1),
                 normalizeEmailTableValue(item.numIngreso, 18),
                 normalizeEmailTableValue(item.nombreRazonSocial, 42),
@@ -3950,7 +5220,7 @@ function buildPendingInvoicesEmailBody() {
         'DETALLE COMPLETO PARA FACTURACION'
     ];
 
-    operatorPendingInvoices.forEach((item, index) => {
+    normalizedItems.forEach((item, index) => {
         lines.push('');
         lines.push(`FACTURA ${index + 1}`);
         lines.push(
@@ -3983,11 +5253,49 @@ async function registerInvoiceRequestInDatabase(invoiceData, options = {}) {
     });
 }
 
-async function markPendingInvoiceRequestsAsSent(destinationEmail) {
+async function sendInvoiceEmailViaSmtp(options = {}) {
+    const destinationEmail = normalizeInvoiceText(options.destinationEmail, 255).toLowerCase();
+    const subject = buildMailSubject(options.subject);
+    const textBody = String(options.textBody || '').trim();
+    const htmlBody = String(options.htmlBody || '').trim();
+
+    if (!destinationEmail) {
+        throw new Error('Debes ingresar el correo del contador.');
+    }
+    if (!subject) {
+        throw new Error('Debes indicar el asunto del correo.');
+    }
+    if (!textBody && !htmlBody) {
+        throw new Error('Debes indicar el contenido del correo.');
+    }
+
+    return apiRequest('/facturas/correo/enviar', {
+        method: 'POST',
+        body: JSON.stringify({
+            destinationEmail,
+            subject,
+            textBody,
+            htmlBody
+        })
+    });
+}
+
+async function markPendingInvoiceRequestsAsSent(destinationEmail, numIngresos = []) {
+    const normalizedNumIngresos = Array.isArray(numIngresos)
+        ? Array.from(
+              new Set(
+                  numIngresos
+                      .map((item) => normalizeInvoiceText(item, 20))
+                      .filter((item) => Boolean(item) && /^\d+-\d{4}$/.test(item))
+              )
+          )
+        : [];
+
     const result = await apiRequest('/facturas/solicitudes/marcar-enviadas', {
         method: 'POST',
         body: JSON.stringify({
-            destinationEmail: normalizeInvoiceText(destinationEmail, 255).toLowerCase()
+            destinationEmail: normalizeInvoiceText(destinationEmail, 255).toLowerCase(),
+            numIngresos: normalizedNumIngresos
         })
     });
 
@@ -3995,13 +5303,20 @@ async function markPendingInvoiceRequestsAsSent(destinationEmail) {
 }
 
 async function handleSendCurrentInvoiceToAccountant() {
-    const parsed = validateInvoiceDraft(collectFacturaFormData(), { requireAmount: true });
-    if (parsed.error) {
-        setFormMessage(ui.facturaFormMessage, parsed.error, 'error');
+    if (!canUseInvoiceWorkflow(currentUser)) {
+        setFormMessage(ui.facturaFormMessage, 'Tu rol no tiene permisos para gestionar facturas.', 'error');
         return;
     }
 
-    const destinationEmail = promptAccountantEmail();
+    clearFacturaFieldErrors();
+    const parsed = validateInvoiceDraft(collectFacturaFormData(), { requireAmount: true });
+    if (parsed.error) {
+        const appliedInline = applyFacturaInlineErrorMessage(parsed.error, parsed.errorFieldId || '');
+        setFormMessage(ui.facturaFormMessage, appliedInline ? '' : parsed.error, appliedInline ? '' : 'error');
+        return;
+    }
+
+    const destinationEmail = await promptAccountantEmail();
     if (destinationEmail === null) {
         return;
     }
@@ -4014,39 +5329,91 @@ async function handleSendCurrentInvoiceToAccountant() {
         return;
     }
 
-    let registerResult = null;
-    try {
-        registerResult = await registerInvoiceRequestInDatabase(parsed.data, {
-            estado: 'ENVIADA',
-            destinationEmail
-        });
-    } catch (error) {
-        setFormMessage(ui.facturaFormMessage, error.message, 'error');
+    const targetIngreso = normalizeInvoiceText(parsed?.data?.numIngreso, 20);
+    if (!targetIngreso) {
+        setFormMessage(ui.facturaFormMessage, 'Debes cargar un NRO INGRESO valido antes de enviar al contador.', 'error');
         return;
     }
-    setCurrentInvoiceRequestStatus(registerResult?.estado || 'ENVIADA');
+    let registerResult = null;
+    const sendButtons = [ui?.operatorEmitInvoiceBtn, ui?.facturaEnviarContadorBtn].filter((button) => Boolean(button));
+    sendButtons.forEach((button) => {
+        button.disabled = true;
+    });
+    setFormMessage(ui.facturaFormMessage, 'Enviando factura por correo...', 'success');
+    showMailSendProgress('Enviando factura por correo...');
 
-    const subject = buildMailSubject(`Solicitud factura ${parsed.data.numIngreso || ''} ${parsed.data.nombreRazonSocial}`.trim());
-    const body = encodeURIComponent(buildSingleInvoiceEmailBody(parsed.data));
-    window.location.href = `mailto:${encodeURIComponent(destinationEmail)}?subject=${subject}&body=${body}`;
-    await refreshOperatorPendingInvoices();
-    if (canUseSecretaryFeatures(currentUser)) {
-        await refreshRequestedInvoicesHistory();
+    try {
+        registerResult = await registerInvoiceRequestInDatabase(parsed.data, {
+            estado: 'PENDIENTE'
+        });
+        const subject = buildMailSubject(`Solicitud factura ${parsed.data.numIngreso || ''} ${parsed.data.nombreRazonSocial}`.trim());
+        await sendInvoiceEmailViaSmtp({
+            destinationEmail,
+            subject,
+            textBody: buildSingleInvoiceEmailBody(parsed.data),
+            htmlBody: buildSingleInvoiceEmailHtml(parsed.data)
+        });
+        await markPendingInvoiceRequestsAsSent(destinationEmail, [targetIngreso]);
+
+        setCurrentInvoiceRequestStatus('ENVIADA');
+        await refreshOperatorPendingInvoices();
+        if (canUseSecretaryFeatures(currentUser)) {
+            await refreshRequestedInvoicesHistory();
+        }
+        await hideMailSendProgress('Correo enviado correctamente.', 'success');
+
+        setFormMessage(
+            ui.facturaFormMessage,
+            registerResult?.message || `Factura enviada correctamente a ${destinationEmail}.`,
+            'success'
+        );
+        setFormMessage(ui.operatorInvoiceMessage, `Factura enviada al contador (${destinationEmail}).`, 'success');
+    } catch (error) {
+        await hideMailSendProgress('No fue posible enviar el correo.', 'error', {
+            minDurationMs: MAIL_SEND_PROGRESS_MIN_MS,
+            finalDurationMs: 1200
+        });
+        const appliedInline = applyFacturaInlineErrorMessage(error.message);
+        setFormMessage(ui.facturaFormMessage, appliedInline ? '' : error.message, appliedInline ? '' : 'error');
+    } finally {
+        applyInvoiceSendButtonsState();
     }
-
-    setFormMessage(
-        ui.facturaFormMessage,
-        registerResult?.message || `Factura preparada para envio a ${destinationEmail}.`,
-        'success'
-    );
-    setFormMessage(ui.operatorInvoiceMessage, `Factura enviada al contador (${destinationEmail}).`, 'success');
 }
 
 async function handleAddCurrentInvoiceToPending() {
+    if (!canUseInvoiceWorkflow(currentUser)) {
+        setFormMessage(ui.facturaFormMessage, 'Tu rol no tiene permisos para gestionar facturas.', 'error');
+        return;
+    }
+
+    if (normalizeInvoiceRequestStatus(currentInvoiceRequestStatus) === 'ENVIADA') {
+        setFormMessage(ui.facturaFormMessage, 'Esta factura ya fue enviada al contador y no puede agregarse a pendientes.', 'error');
+        setFormMessage(ui.operatorInvoiceMessage, 'La factura ya fue enviada al contador.', 'error');
+        applyInvoiceSendButtonsState();
+        return;
+    }
+
+    clearFacturaFieldErrors();
     const parsed = validateInvoiceDraft(collectFacturaFormData(), { requireAmount: true });
     if (parsed.error) {
-        setFormMessage(ui.facturaFormMessage, parsed.error, 'error');
+        const appliedInline = applyFacturaInlineErrorMessage(parsed.error, parsed.errorFieldId || '');
+        setFormMessage(ui.facturaFormMessage, appliedInline ? '' : parsed.error, appliedInline ? '' : 'error');
         return;
+    }
+
+    const targetIngreso = normalizeInvoiceText(parsed?.data?.numIngreso, 20);
+    if (targetIngreso && /^\d+-\d{4}$/.test(targetIngreso)) {
+        await syncCurrentInvoiceRequestStatusByIngreso(targetIngreso);
+        if (normalizeInvoiceRequestStatus(currentInvoiceRequestStatus) === 'ENVIADA') {
+            setFormMessage(
+                ui.facturaFormMessage,
+                'Esta factura ya fue enviada al contador y no puede agregarse a pendientes.',
+                'error'
+            );
+            setFormMessage(ui.operatorInvoiceMessage, 'La factura ya fue enviada al contador.', 'error');
+            applyInvoiceSendButtonsState();
+            return;
+        }
     }
 
     let registerResult = null;
@@ -4063,7 +5430,8 @@ async function handleAddCurrentInvoiceToPending() {
             await refreshRequestedInvoicesHistory();
         }
     } catch (error) {
-        setFormMessage(ui.facturaFormMessage, error.message, 'error');
+        const appliedInline = applyFacturaInlineErrorMessage(error.message);
+        setFormMessage(ui.facturaFormMessage, appliedInline ? '' : error.message, appliedInline ? '' : 'error');
         return;
     }
 
@@ -4091,6 +5459,11 @@ async function handleAddCurrentInvoiceToPending() {
 }
 
 async function handleSendPendingInvoicesByEmail() {
+    if (!canUseInvoiceWorkflow(currentUser)) {
+        setFormMessage(ui.operatorInvoiceMessage, 'Tu rol no tiene permisos para gestionar facturas.', 'error');
+        return;
+    }
+
     const refreshed = await refreshOperatorPendingInvoices({
         showErrors: true,
         messageElement: ui.operatorInvoiceMessage
@@ -4103,7 +5476,7 @@ async function handleSendPendingInvoicesByEmail() {
         return;
     }
 
-    const destinationEmail = promptAccountantEmail();
+    const destinationEmail = await promptAccountantEmail();
     if (destinationEmail === null) {
         return;
     }
@@ -4116,17 +5489,36 @@ async function handleSendPendingInvoicesByEmail() {
         return;
     }
 
+    const pendingSnapshot = Array.isArray(operatorPendingInvoices) ? [...operatorPendingInvoices] : [];
+    const pendingIngresos = pendingSnapshot
+        .map((item) => normalizeInvoiceText(item?.numIngreso, 20))
+        .filter((item) => Boolean(item) && /^\d+-\d{4}$/.test(item));
+    if (pendingIngresos.length === 0) {
+        setFormMessage(ui.operatorInvoiceMessage, 'No se encontraron NRO INGRESO validos para enviar.', 'error');
+        return;
+    }
     let updatedCount = 0;
+    showMailSendProgress('Enviando lista de facturas pendientes...');
     try {
-        updatedCount = await markPendingInvoiceRequestsAsSent(destinationEmail);
+        const subject = buildMailSubject(
+            `Facturas pendientes turno ${new Date().toLocaleDateString('es-CL')} (${pendingSnapshot.length})`
+        );
+        await sendInvoiceEmailViaSmtp({
+            destinationEmail,
+            subject,
+            textBody: buildPendingInvoicesEmailBody(pendingSnapshot),
+            htmlBody: buildPendingInvoicesEmailHtml(pendingSnapshot)
+        });
+        updatedCount = await markPendingInvoiceRequestsAsSent(destinationEmail, pendingIngresos);
+        await hideMailSendProgress('Correo enviado correctamente.', 'success');
     } catch (error) {
+        await hideMailSendProgress('No fue posible enviar el correo.', 'error', {
+            minDurationMs: MAIL_SEND_PROGRESS_MIN_MS,
+            finalDurationMs: 1200
+        });
         setFormMessage(ui.operatorInvoiceMessage, error.message, 'error');
         return;
     }
-
-    const subject = buildMailSubject(`Facturas pendientes turno ${new Date().toLocaleDateString('es-CL')} (${operatorPendingInvoices.length})`);
-    const body = encodeURIComponent(buildPendingInvoicesEmailBody());
-    window.location.href = `mailto:${encodeURIComponent(destinationEmail)}?subject=${subject}&body=${body}`;
 
     await refreshOperatorPendingInvoices();
     if (canUseSecretaryFeatures(currentUser)) {
@@ -4564,10 +5956,50 @@ async function setAdminIngresoMode(mode, options = {}) {
 
 function getAssignableRolesForCurrentUser() {
     if (isSuperUser(currentUser)) {
-        return ['SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR'];
+        return ['SUPER', 'ADMIN', 'SECRETARIA', 'OPERADOR', 'SUPERVISOR'];
     }
 
-    return ['ADMIN', 'SECRETARIA', 'OPERADOR'];
+    return ['SECRETARIA', 'OPERADOR', 'SUPERVISOR'];
+}
+
+function ensureAdminRoleOptions() {
+    if (!ui || !ui.adminRole) {
+        return;
+    }
+
+    const expectedRoles = [
+        { value: 'OPERADOR', label: 'OPERADOR' },
+        { value: 'SUPERVISOR', label: 'SUPERVISOR' },
+        { value: 'SECRETARIA', label: 'SECRETARIA' },
+        { value: 'ADMIN', label: 'ADMIN' },
+        { value: 'SUPER', label: 'SUPER' }
+    ];
+
+    const selectedRole = String(ui.adminRole.value || '').trim().toUpperCase();
+    const existingOptions = new Map();
+    Array.from(ui.adminRole.options).forEach((option) => {
+        const normalizedValue = String(option.value || '').trim().toUpperCase();
+        if (!normalizedValue || existingOptions.has(normalizedValue)) {
+            return;
+        }
+
+        existingOptions.set(normalizedValue, option);
+    });
+
+    const fragment = document.createDocumentFragment();
+    expectedRoles.forEach((roleItem) => {
+        const option = existingOptions.get(roleItem.value) || document.createElement('option');
+        option.value = roleItem.value;
+        option.textContent = roleItem.label;
+        option.hidden = false;
+        option.disabled = false;
+        fragment.appendChild(option);
+    });
+
+    ui.adminRole.replaceChildren(fragment);
+    if (expectedRoles.some((roleItem) => roleItem.value === selectedRole)) {
+        ui.adminRole.value = selectedRole;
+    }
 }
 
 function syncAdminRoleOptionsForCurrentUser() {
@@ -4575,16 +6007,28 @@ function syncAdminRoleOptionsForCurrentUser() {
         return;
     }
 
+    ensureAdminRoleOptions();
+
     const canAssignSuper = isSuperUser(currentUser);
+    const canAssignAdmin = isSuperUser(currentUser) || (editingAdminUserId && editingAdminUserRole === 'ADMIN');
     const options = Array.from(ui.adminRole.options);
     options.forEach((option) => {
-        if (String(option.value || '').toUpperCase() === 'SUPER') {
+        const optionValue = String(option.value || '').toUpperCase();
+        if (optionValue === 'SUPER') {
             option.hidden = !canAssignSuper;
             option.disabled = !canAssignSuper;
+            return;
+        }
+        if (optionValue === 'ADMIN') {
+            option.hidden = !canAssignAdmin;
+            option.disabled = !canAssignAdmin;
         }
     });
 
     const allowed = getAssignableRolesForCurrentUser();
+    if (editingAdminUserId && editingAdminUserRole === 'ADMIN') {
+        allowed.push('ADMIN');
+    }
     const currentValue = String(ui.adminRole.value || '').toUpperCase();
     if (!allowed.includes(currentValue)) {
         ui.adminRole.value = 'OPERADOR';
@@ -4844,6 +6288,7 @@ function resetAdminUserInputs() {
     ui.adminNombre.value = '';
     ui.adminSucursal.value = '';
     ui.adminPassword.value = '';
+    editingAdminUserRole = '';
     ui.adminRole.value = 'OPERADOR';
     syncAdminRoleOptionsForCurrentUser();
 }
@@ -4888,6 +6333,7 @@ function populateAdminSucursalSelect(sucursales, selectedSucursal = '') {
 
 function enterAdminEditMode(usuario) {
     editingAdminUserId = Number(usuario.id);
+    editingAdminUserRole = normalizeUserRole(usuario.role || 'OPERADOR');
     ui.adminUsername.value = usuario.username || '';
     ui.adminNombre.value = usuario.nombre || '';
     populateAdminSucursalSelect(availableBranches, usuario.sucursal || '');
@@ -4903,6 +6349,7 @@ function enterAdminEditMode(usuario) {
 
 function exitAdminEditMode() {
     editingAdminUserId = null;
+    editingAdminUserRole = '';
     resetAdminUserInputs();
     syncAdminRoleOptionsForCurrentUser();
     ui.adminCreateUserBtn.textContent = 'CREAR USUARIO';
@@ -5375,6 +6822,9 @@ async function handleAdminCreateUser() {
     const role = String(ui.adminRole.value || '').trim().toUpperCase();
     const password = ui.adminPassword.value;
     const assignableRoles = getAssignableRolesForCurrentUser();
+    if (editingAdminUserId && editingAdminUserRole === 'ADMIN') {
+        assignableRoles.push('ADMIN');
+    }
 
     if (!assignableRoles.includes(role)) {
         setFormMessage(ui.adminMessage, `Rol invalido. Usa ${assignableRoles.join(', ')}.`, 'error');
@@ -5398,7 +6848,7 @@ async function handleAdminCreateUser() {
         }
 
         try {
-            await apiRequest(`/admin/usuarios/${encodeURIComponent(editingAdminUserId)}`, {
+            const result = await apiRequest(`/admin/usuarios/${encodeURIComponent(editingAdminUserId)}`, {
                 method: 'PUT',
                 body: JSON.stringify(payload)
             });
@@ -5409,7 +6859,12 @@ async function handleAdminCreateUser() {
                 currentUser.nombre = nombre;
                 currentUser.sucursal = sucursal;
                 currentUser.role = role;
-                showAppForUser(currentUser);
+                if (result?.usuario && Object.prototype.hasOwnProperty.call(result.usuario, 'mustChangePassword')) {
+                    currentUser.mustChangePassword = Boolean(result.usuario.mustChangePassword);
+                }
+                await activateAuthenticatedUser(currentUser, {
+                    passwordMessage: currentUser.mustChangePassword ? 'Debes cambiar tu clave temporal para continuar.' : ''
+                });
             }
 
             exitAdminEditMode();
@@ -5444,8 +6899,8 @@ async function handleAdminCreateUser() {
         resetAdminUserInputs();
         const roleLabel = String(payload.role || '').toUpperCase();
         const message =
-            roleLabel === 'ADMIN' || roleLabel === 'SUPER'
-                ? `Usuario ${payload.username} creado con clave fija de cuenta privilegiada.`
+            roleLabel === 'SUPER'
+                ? `Usuario ${payload.username} creado con clave fija de cuenta SUPER.`
                 : `Usuario ${payload.username} creado. Debe cambiar su clave temporal en el primer ingreso.`;
         setFormMessage(ui.adminMessage, message, 'success');
         await loadAdminUsers();
@@ -5478,7 +6933,18 @@ function renderAdminUsers(usuarios) {
         return;
     }
 
-    const sortedUsers = [...usuarios].sort((left, right) => {
+    const visibleUsers = isSuperUser(currentUser)
+        ? [...usuarios]
+        : [...usuarios].filter((item) => {
+              const isGuestAccount =
+                  Boolean(item && item.isGuest) ||
+                  String(item && item.username ? item.username : '')
+                      .trim()
+                      .toLowerCase() === 'invitado';
+              return !isGuestAccount;
+          });
+
+    const sortedUsers = visibleUsers.sort((left, right) => {
         const leftIsGuest =
             Boolean(left && left.isGuest) || String(left && left.username ? left.username : '').trim().toLowerCase() === 'invitado';
         const rightIsGuest =
@@ -5557,11 +7023,11 @@ function renderAdminUsers(usuarios) {
 }
 
 async function handleAdminGuestStatusToggle(usuario, checkboxElement) {
-    if (!canManageAdminCatalogs(currentUser)) {
+    if (!isSuperUser(currentUser)) {
         if (checkboxElement) {
             checkboxElement.checked = !checkboxElement.checked;
         }
-        setFormMessage(ui.adminMessage, 'Solo ADMIN o SUPER pueden cambiar el estado del invitado.', 'error');
+        setFormMessage(ui.adminMessage, 'Solo SUPER puede cambiar el estado del invitado.', 'error');
         return;
     }
 
@@ -5636,9 +7102,9 @@ async function handleAdminResetPassword(usuario) {
     }
 
     const targetRole = String(usuario.role || '').toUpperCase();
-    const isTargetPrivileged = targetRole === 'ADMIN' || targetRole === 'SUPER';
-    const promptLabel = isTargetPrivileged
-        ? `Nueva clave fija para ${targetRole} ${usuario.username} (minimo 6 caracteres):`
+    const isTargetSuper = targetRole === 'SUPER';
+    const promptLabel = isTargetSuper
+        ? `Nueva clave fija para SUPER ${usuario.username} (minimo 6 caracteres):`
         : `Nueva clave temporal para ${usuario.username} (minimo 6 caracteres):`;
     const temporaryPassword = window.prompt(promptLabel, 'Temporal123!');
 
@@ -5669,6 +7135,10 @@ async function handleGuardar() {
     if (!canCreateRegistros(currentUser)) {
         if (isGuestUser(currentUser)) {
             setFormMessage(ui.formMessage, 'Modo invitado: solo lectura.', 'error');
+            return;
+        }
+        if (isSupervisorUser(currentUser)) {
+            setFormMessage(ui.formMessage, 'Tu rol solo puede buscar registros y agregar comentarios.', 'error');
             return;
         }
 
@@ -5745,7 +7215,15 @@ async function handleGuardar() {
 
 async function handleModificar() {
     if (!canEditRegistros(currentUser)) {
-        setFormMessage(ui.formMessage, 'Modo invitado: solo lectura.', 'error');
+        if (isGuestUser(currentUser)) {
+            setFormMessage(ui.formMessage, 'Modo invitado: solo lectura.', 'error');
+            return;
+        }
+        if (isSupervisorUser(currentUser)) {
+            setFormMessage(ui.formMessage, 'Tu rol solo puede buscar registros y agregar comentarios.', 'error');
+            return;
+        }
+        setFormMessage(ui.formMessage, 'Tu rol no tiene permisos para modificar registros.', 'error');
         return;
     }
 
@@ -5833,7 +7311,11 @@ async function handleModificar() {
 
         await syncCurrentInvoiceRequestStatusByIngreso(finalIngreso);
         await loadHistoryForIngreso(finalIngreso);
+        saveLoadedRegistroSnapshot();
         updateRegistroActionButtons();
+        if (canUseOperatorDocumentAlerts(currentUser)) {
+            void refreshOperatorDocumentAlerts({ silent: true });
+        }
         setFormMessage(
             ui.formMessage,
             isOperatorRestricted
@@ -5925,6 +7407,7 @@ async function resetRegistroFormAfterSubmit() {
     populateComunas(ui.comuna, '');
     renderHistory([]);
     loadedIngresoOriginal = '';
+    clearLoadedRegistroSnapshot();
     loadedRecordUnknownDocuments = [];
     loadedComentarioOriginal = '';
     resetFacturaForm();
@@ -5951,8 +7434,8 @@ function focusNombreInput() {
 }
 
 async function handleBuscar() {
-    if (loadedIngresoOriginal) {
-        setFormMessage(ui.formMessage, 'Registro cargado. Presiona LIMPIAR para buscar otro.', 'error');
+    if (loadedIngresoOriginal && hasPendingLoadedRegistroChanges()) {
+        showPendingModifyRequiredWarningPopup();
         return;
     }
 
@@ -6042,6 +7525,20 @@ function isAuthFailureError(error) {
     return Number(error?.status) === 401;
 }
 
+function isWriteApiKeyAuthFailure(status, code, message) {
+    if (Number(status) !== 401) {
+        return false;
+    }
+
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (normalizedCode === 'WRITE_API_KEY_REQUIRED') {
+        return true;
+    }
+
+    const normalizedMessage = String(message || '').toLowerCase();
+    return normalizedMessage.includes('operaciones de escritura') || normalizedMessage.includes('x-api-key');
+}
+
 async function apiRequest(path, options = {}) {
     const { skipAuthRedirect = false, skipPasswordRedirect = false, ...fetchOptions } = options;
 
@@ -6093,6 +7590,8 @@ async function apiRequest(path, options = {}) {
 
     if (!response.ok) {
         const message = payload.message || 'Ocurrio un error de conexion con el servidor.';
+        const responseCode = payload.code || '';
+        const isWriteAuthFailure = isWriteApiKeyAuthFailure(response.status, responseCode, message);
         if (response.status === 403 && payload.code === 'PASSWORD_CHANGE_REQUIRED' && !skipPasswordRedirect) {
             if (currentUser) {
                 currentUser.mustChangePassword = true;
@@ -6100,13 +7599,13 @@ async function apiRequest(path, options = {}) {
             showPasswordChangeCard(currentUser, message);
         }
 
-        if (response.status === 401 && !skipAuthRedirect) {
+        if (response.status === 401 && !skipAuthRedirect && !isWriteAuthFailure) {
             handleSessionExpired(message);
         }
 
         throw createApiError(message, {
             status: response.status,
-            code: payload.code || '',
+            code: responseCode,
             payload,
             isNetworkError: false
         });
@@ -6122,6 +7621,7 @@ async function loadNextIngreso(numIngresoInput, messageElement) {
         numIngresoInput.value = nextIngreso;
         suggestedIngresoForNewRecord = nextIngreso;
         loadedIngresoOriginal = '';
+        clearLoadedRegistroSnapshot();
         loadedRecordUnknownDocuments = [];
         loadedComentarioOriginal = '';
         updateRegistroActionButtons();
@@ -6250,15 +7750,183 @@ function fillForm(form, data, comunaSelect) {
     applyFacturaSnapshotToForm(data.factura);
 }
 
+function canEditHistoryComments(user) {
+    return canManageAdminCatalogs(user);
+}
+
+function parseDateValue(value) {
+    if (!value) {
+        return null;
+    }
+
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
+    }
+
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+
+    const sqlDateTimeMatch = /^(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+    if (sqlDateTimeMatch) {
+        const year = Number(sqlDateTimeMatch[1]);
+        const month = Number(sqlDateTimeMatch[2]);
+        const day = Number(sqlDateTimeMatch[3]);
+        const hour = Number(sqlDateTimeMatch[4]);
+        const minute = Number(sqlDateTimeMatch[5]);
+        const second = Number(sqlDateTimeMatch[6] || '0');
+        const localDate = new Date(year, month - 1, day, hour, minute, second);
+        if (
+            !Number.isNaN(localDate.getTime()) &&
+            localDate.getFullYear() === year &&
+            localDate.getMonth() + 1 === month &&
+            localDate.getDate() === day &&
+            localDate.getHours() === hour &&
+            localDate.getMinutes() === minute &&
+            localDate.getSeconds() === second
+        ) {
+            return localDate;
+        }
+    }
+
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+        return null;
+    }
+
+    return parsed;
+}
+
+function toLocalDateTimeInputValue(value) {
+    const parsed = parseDateValue(value);
+    if (!parsed) {
+        return '';
+    }
+
+    const timezoneOffsetMs = parsed.getTimezoneOffset() * 60000;
+    return new Date(parsed.getTime() - timezoneOffsetMs).toISOString().slice(0, 16);
+}
+
+function closeHistoryEditModal() {
+    if (ui?.historyEditModalOverlay) {
+        ui.historyEditModalOverlay.classList.add('hidden');
+    }
+    if (ui?.historyEditForm && typeof ui.historyEditForm.reset === 'function') {
+        ui.historyEditForm.reset();
+    }
+    setFormMessage(ui?.historyEditMessage, '', '');
+    editingHistoryEntryId = null;
+    editingHistoryIngreso = '';
+}
+
+function openHistoryEditModal(historyItem) {
+    if (!canEditHistoryComments(currentUser)) {
+        setFormMessage(ui?.formMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial.', 'error');
+        return;
+    }
+
+    const historyId = Number(historyItem?.id);
+    const targetIngreso = String(historyItem?.numIngreso || loadedIngresoOriginal || '').trim();
+    const actionLabel = String(historyItem?.accion || '').trim().toUpperCase();
+    if (!Number.isInteger(historyId) || historyId <= 0 || !targetIngreso) {
+        setFormMessage(ui?.formMessage, 'No fue posible abrir este comentario para edicion.', 'error');
+        return;
+    }
+    if (actionLabel !== 'COMENTARIO') {
+        setFormMessage(ui?.formMessage, 'Solo se pueden editar entradas de tipo COMENTARIO.', 'error');
+        return;
+    }
+    if (!ui?.historyEditModalOverlay || !ui?.historyEditFecha || !ui?.historyEditComentario) {
+        return;
+    }
+
+    const localDateTime = toLocalDateTimeInputValue(historyItem?.fecha);
+    if (!localDateTime) {
+        setFormMessage(ui?.formMessage, 'No fue posible interpretar la fecha de este comentario.', 'error');
+        return;
+    }
+
+    editingHistoryEntryId = historyId;
+    editingHistoryIngreso = targetIngreso;
+    ui.historyEditFecha.value = localDateTime;
+    ui.historyEditComentario.value = formatComentarioTitleCase(String(historyItem?.comentario || '')).trim();
+    setFormMessage(ui?.historyEditMessage, '', '');
+    ui.historyEditModalOverlay.classList.remove('hidden');
+    window.requestAnimationFrame(() => {
+        ui.historyEditComentario.focus();
+        ui.historyEditComentario.select();
+    });
+}
+
+async function handleHistoryEditSubmit(event) {
+    event.preventDefault();
+
+    if (!canEditHistoryComments(currentUser)) {
+        setFormMessage(ui?.historyEditMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial.', 'error');
+        return;
+    }
+
+    const historyId = Number(editingHistoryEntryId);
+    const targetIngreso = String(editingHistoryIngreso || loadedIngresoOriginal || '').trim();
+    if (!Number.isInteger(historyId) || historyId <= 0 || !targetIngreso) {
+        setFormMessage(ui?.historyEditMessage, 'No se encontro el comentario seleccionado para editar.', 'error');
+        return;
+    }
+
+    const fechaRaw = String(ui?.historyEditFecha?.value || '').trim();
+    const comentario = formatComentarioTitleCase(String(ui?.historyEditComentario?.value || '')).trim();
+
+    if (!fechaRaw) {
+        setFormMessage(ui?.historyEditMessage, 'Debes ingresar fecha y hora del comentario.', 'error');
+        return;
+    }
+    if (!comentario) {
+        setFormMessage(ui?.historyEditMessage, 'Debes ingresar el comentario.', 'error');
+        return;
+    }
+
+    try {
+        await apiRequest(`/registros/${encodeURIComponent(targetIngreso)}/historial/${encodeURIComponent(historyId)}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                fecha: fechaRaw,
+                comentario
+            })
+        });
+
+        try {
+            await loadHistoryForIngreso(targetIngreso);
+            closeHistoryEditModal();
+            setFormMessage(ui?.formMessage, 'Comentario de historial actualizado correctamente.', 'success');
+        } catch (refreshError) {
+            closeHistoryEditModal();
+            setFormMessage(
+                ui?.formMessage,
+                `Comentario actualizado, pero no se pudo recargar el historial: ${refreshError.message}`,
+                'error'
+            );
+        }
+    } catch (error) {
+        setFormMessage(ui?.historyEditMessage, error.message, 'error');
+    }
+}
+
 function renderHistory(historial) {
     if (!ui || !ui.historialBody) {
         return;
     }
 
+    const canManageHistory = canEditHistoryComments(currentUser);
+    if (ui.historialActionHeader) {
+        ui.historialActionHeader.classList.toggle('hidden', !canManageHistory);
+    }
+
     ui.historialBody.innerHTML = '';
 
     if (!Array.isArray(historial) || historial.length === 0) {
-        ui.historialBody.innerHTML = '<tr><td colspan="3">Sin historial para mostrar.</td></tr>';
+        const emptyCols = canManageHistory ? 4 : 3;
+        ui.historialBody.innerHTML = `<tr><td colspan="${emptyCols}">Sin historial para mostrar.</td></tr>`;
         return;
     }
 
@@ -6270,6 +7938,16 @@ function renderHistory(historial) {
 
         const comentarioCell = document.createElement('td');
         comentarioCell.textContent = item.comentario || '';
+        if (canManageHistory && Boolean(item?.editado)) {
+            const editedBy = normalizeInvoiceText(item?.editadoPor, 120);
+            const editedAt = formatDateTime(item?.editadoEn);
+            const meta = document.createElement('div');
+            meta.className = 'helper-text';
+            meta.textContent = editedBy
+                ? `Modificado por ${editedBy}${editedAt ? ` el ${editedAt}` : ''}.`
+                : 'Modificado por administrador.';
+            comentarioCell.appendChild(meta);
+        }
 
         const usuarioCell = document.createElement('td');
         usuarioCell.textContent = item.usuario || '';
@@ -6277,18 +7955,29 @@ function renderHistory(historial) {
         row.appendChild(fechaCell);
         row.appendChild(comentarioCell);
         row.appendChild(usuarioCell);
+        if (canManageHistory) {
+            const actionCell = document.createElement('td');
+            const canEditEntry = String(item?.accion || '').toUpperCase() === 'COMENTARIO';
+            if (canEditEntry) {
+                const editBtn = document.createElement('button');
+                editBtn.type = 'button';
+                editBtn.className = 'admin-reset-btn';
+                editBtn.textContent = 'EDITAR';
+                editBtn.addEventListener('click', () => openHistoryEditModal(item));
+                actionCell.appendChild(editBtn);
+            } else {
+                actionCell.textContent = '-';
+            }
+            row.appendChild(actionCell);
+        }
         ui.historialBody.appendChild(row);
     });
 }
 
 function formatDateTime(value) {
-    if (!value) {
-        return '';
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return String(value);
+    const parsed = parseDateValue(value);
+    if (!parsed) {
+        return String(value || '');
     }
 
     return parsed.toLocaleString('es-CL', {
@@ -6489,7 +8178,7 @@ function validateNumLotes(value) {
 }
 
 function resolveApiBase() {
-    const override = getApiBaseOverride();
+    const override = sanitizeApiBaseOverride(getApiBaseOverride());
     if (override) {
         return override;
     }
@@ -6507,6 +8196,7 @@ function resolveApiBase() {
         return 'http://127.0.0.1:3000/api';
     }
 
+    // En internet (Nginx), la API debe resolverse por la misma origin en /api.
     return '/api';
 }
 
@@ -6522,6 +8212,7 @@ function resolveApiFallbackBases(primaryBase) {
     };
 
     const host = window.location.hostname;
+    const port = window.location.port;
     const isLocalHost = host === 'localhost' || host === '127.0.0.1';
 
     if (isLocalHost) {
@@ -6530,6 +8221,10 @@ function resolveApiFallbackBases(primaryBase) {
     }
 
     appendCandidate('/api');
+
+    if (!isLocalHost && port !== '3000') {
+        appendCandidate(`http://${host}:3000/api`);
+    }
     return candidates;
 }
 
@@ -6539,6 +8234,53 @@ function getApiBaseOverride() {
     } catch (error) {
         return '';
     }
+}
+
+function isLoopbackHost(hostname) {
+    const host = String(hostname || '').trim().toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
+function sanitizeApiBaseOverride(overrideValue) {
+    const normalized = normalizeApiBase(overrideValue);
+    if (!normalized) {
+        return '';
+    }
+
+    const pageHost = String(window.location.hostname || '').trim().toLowerCase();
+    const pageIsLoopback = isLoopbackHost(pageHost);
+
+    try {
+        const parsed = new URL(normalized, window.location.origin);
+        const overrideHost = String(parsed.hostname || '').trim().toLowerCase();
+        const overrideIsLoopback = isLoopbackHost(overrideHost);
+        const overridePort = String(parsed.port || '').trim();
+        const pagePort = String(window.location.port || '').trim();
+
+        // Si estamos en internet (host publico), nunca usar override local 127.0.0.1/localhost.
+        if (!pageIsLoopback && overrideIsLoopback) {
+            try {
+                window.localStorage.removeItem(API_BASE_STORAGE);
+            } catch (storageError) {
+                // Ignorar errores de storage.
+            }
+            return '';
+        }
+
+        // Si estamos en internet por 80/443, evitar override duro hacia :3000 del mismo host.
+        if (!pageIsLoopback && pagePort !== '3000' && overrideHost === pageHost && overridePort === '3000') {
+            try {
+                window.localStorage.removeItem(API_BASE_STORAGE);
+            } catch (storageError) {
+                // Ignorar errores de storage.
+            }
+            return '';
+        }
+    } catch (error) {
+        // Si no se puede parsear como URL, conservar valor normalizado.
+    }
+
+    return normalized;
 }
 
 function normalizeApiBase(value) {
@@ -6551,20 +8293,40 @@ function normalizeApiBase(value) {
 }
 
 function getApiKey() {
+    if (apiKeyMemory) {
+        return apiKeyMemory;
+    }
+
     try {
         const sessionValue = (window.sessionStorage.getItem(API_KEY_STORAGE) || '').trim();
         if (sessionValue) {
-            return sessionValue;
+            apiKeyMemory = sessionValue;
+            return apiKeyMemory;
         }
 
         const legacyValue = (window.localStorage.getItem(API_KEY_STORAGE) || '').trim();
         if (legacyValue) {
             window.sessionStorage.setItem(API_KEY_STORAGE, legacyValue);
             window.localStorage.removeItem(API_KEY_STORAGE);
-            return legacyValue;
+            apiKeyMemory = legacyValue;
+            return apiKeyMemory;
         }
 
         return '';
+    } catch (error) {
+        return apiKeyMemory;
+    }
+}
+
+function setApiKey(value) {
+    apiKeyMemory = String(value || '').trim();
+    try {
+        if (apiKeyMemory) {
+            window.sessionStorage.setItem(API_KEY_STORAGE, apiKeyMemory);
+        } else {
+            window.sessionStorage.removeItem(API_KEY_STORAGE);
+            window.localStorage.removeItem(API_KEY_STORAGE);
+        }
     } catch (error) {
         return '';
     }
@@ -6612,9 +8374,12 @@ function setAuthToken(token) {
 
 function clearAuthSession() {
     authTokenMemory = '';
+    apiKeyMemory = '';
     try {
         window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE);
         window.localStorage.removeItem(AUTH_TOKEN_STORAGE);
+        window.sessionStorage.removeItem(API_KEY_STORAGE);
+        window.localStorage.removeItem(API_KEY_STORAGE);
     } catch (error) {
         // Ignorar errores de almacenamiento local.
     }
@@ -6663,12 +8428,16 @@ function populateRegiones(regionSelect, emptyLabel = 'Seleccione region') {
     setSelectValueWithFallback(regionSelect, previousValue);
 }
 
-function populateComunas(comunaSelect, region, selectedComuna = '') {
+function populateComunas(comunaSelect, region, selectedComuna = '', emptyLabel = 'Seleccione comuna') {
     if (!comunaSelect) {
         return;
     }
 
-    comunaSelect.innerHTML = '<option value="">Seleccione comuna</option>';
+    comunaSelect.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = String(emptyLabel || 'Seleccione comuna');
+    comunaSelect.appendChild(defaultOption);
 
     if (!region || !REGION_COMUNAS[region]) {
         comunaSelect.disabled = true;

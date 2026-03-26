@@ -757,6 +757,79 @@ button {
     margin: 12px 0 0;
 }
 
+.invoice-email-modal-card {
+    width: min(460px, 100%);
+}
+
+.invoice-email-modal-card .helper-text {
+    margin: 0 0 10px;
+}
+
+.invoice-email-modal-card input[type='email'] {
+    width: 100%;
+}
+
+.history-edit-modal-card {
+    width: min(740px, 100%);
+}
+
+.history-edit-modal-card textarea {
+    width: 100%;
+}
+
+.secretary-followup-modal-card {
+    width: min(1120px, 100%);
+}
+
+.secretary-followup-table-wrapper {
+    max-height: 52vh;
+    overflow-y: auto;
+}
+
+.secretary-followup-filter-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.secretary-followup-filter-actions button {
+    flex: 1;
+}
+
+.operator-doc-alerts-modal-card {
+    width: min(1120px, 100%);
+}
+
+.operator-doc-alerts-table-wrapper {
+    max-height: 52vh;
+    overflow-y: auto;
+}
+
+#operatorDocAlertsBtn.has-pending {
+    background: #d95c2b;
+    color: #ffffff;
+    border-color: #a53f1a;
+}
+
+#operatorDocAlertsBtn.has-pending:hover {
+    background: #bf4f22;
+}
+
+.operator-doc-alerts-review-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+}
+
+.operator-doc-alerts-doc-list {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.operator-doc-alerts-doc-list li {
+    margin-bottom: 2px;
+}
+
 .mail-progress-spinner {
     width: 64px;
     height: 64px;
@@ -883,6 +956,10 @@ button {
     }
 
     .invoice-modal-actions {
+        flex-direction: column;
+    }
+
+    .secretary-followup-filter-actions {
         flex-direction: column;
     }
 

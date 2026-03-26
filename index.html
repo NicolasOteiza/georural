@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="geo-rural-api-base" content="">
     <title>Formulario de Registro - Geo Rural</title>
-    <link rel="stylesheet" href="styles.css?v=20260323-09">
+    <link rel="icon" type="image/png" href="/logo.png">
+    <link rel="stylesheet" href="styles.css?v=20260326-01">
 </head>
 <body>
     <div id="appTopPanels" class="app-top-panels hidden">
@@ -24,6 +25,7 @@
                 <button type="button" id="adminToggleUsageBtn" class="admin-menu-btn hidden">EQUIPOS ACTIVOS</button>
                 <button type="button" id="secretariaViewInvoicesBtn" class="admin-menu-btn hidden">FACTURAS SOLICITADAS</button>
                 <button type="button" id="secretariaQuotationBtn" class="admin-menu-btn hidden">COTIZACION</button>
+                <button type="button" id="secretariaNoMovementBtn" class="admin-menu-btn hidden">SEGUIMIENTO 8+ DIAS</button>
                 <button type="button" id="adminYearCurrentBtn" class="admin-menu-btn admin-mode-btn">ANO ACTUAL</button>
                 <button type="button" id="adminYearPastBtn" class="admin-menu-btn admin-mode-btn">ANOS ANTERIORES</button>
             </div>
@@ -57,6 +59,7 @@
                             <label for="adminRole">ROL</label>
                             <select id="adminRole">
                                 <option value="OPERADOR">OPERADOR</option>
+                                <option value="SUPERVISOR">SUPERVISOR</option>
                                 <option value="SECRETARIA">SECRETARIA</option>
                                 <option value="ADMIN">ADMIN</option>
                                 <option value="SUPER">SUPER</option>
@@ -320,6 +323,7 @@
                 <button type="button" class="modificar">MODIFICAR</button>
                 <button type="button" class="buscar">BUSCAR</button>
                 <button type="button" id="buscarFechaBtn" class="buscar">BUSCAR POR FECHA</button>
+                <button type="button" id="operatorDocAlertsBtn" class="buscar hidden">DOCS NUEVOS</button>
                 <button type="button" class="eliminar hidden">ELIMINAR</button>
                 <button type="reset" class="limpiar">LIMPIAR</button>
             </div>
@@ -409,6 +413,7 @@
                                         <th>Fecha</th>
                                         <th>Comentario</th>
                                         <th>Usuario</th>
+                                        <th id="historialActionHeader" class="hidden">Accion</th>
                                     </tr>
                                 </thead>
                                 <tbody id="historialBody">
@@ -790,6 +795,156 @@
         </div>
     </div>
 
+    <div id="invoiceEmailPromptOverlay" class="modal-overlay hidden">
+        <div class="modal-card invoice-email-modal-card" role="dialog" aria-modal="true" aria-labelledby="invoiceEmailPromptTitle">
+            <h3 id="invoiceEmailPromptTitle">ENVIAR AL CONTADOR</h3>
+            <p class="helper-text">Ingresa el correo del contador y pulsa ENVIAR.</p>
+            <div class="invoice-modal-form">
+                <div class="form-group">
+                    <label for="invoiceEmailPromptInput">CORREO DEL CONTADOR</label>
+                    <input
+                        type="email"
+                        id="invoiceEmailPromptInput"
+                        maxlength="255"
+                        placeholder="contador@empresa.cl"
+                        autocomplete="off"
+                    >
+                </div>
+            </div>
+            <p id="invoiceEmailPromptMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="invoiceEmailPromptCancelBtn" class="limpiar">CANCELAR</button>
+                <button type="button" id="invoiceEmailPromptSendBtn" class="guardar">ENVIAR</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="historyEditModalOverlay" class="modal-overlay hidden">
+        <div class="modal-card history-edit-modal-card" role="dialog" aria-modal="true" aria-labelledby="historyEditModalTitle">
+            <h3 id="historyEditModalTitle">EDITAR COMENTARIO</h3>
+            <form id="historyEditForm" autocomplete="off">
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="historyEditFecha">FECHA Y HORA</label>
+                        <input type="datetime-local" id="historyEditFecha" step="60" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="historyEditComentario">COMENTARIO</label>
+                        <textarea id="historyEditComentario" rows="5" maxlength="4000" required></textarea>
+                    </div>
+                </div>
+                <p id="historyEditMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="invoice-modal-actions">
+                    <button type="button" id="historyEditCancelBtn" class="limpiar">CANCELAR</button>
+                    <button type="submit" id="historyEditSaveBtn" class="guardar">GUARDAR CAMBIOS</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="secretaryNoMovementOverlay" class="modal-overlay hidden">
+        <div class="modal-card secretary-followup-modal-card" role="dialog" aria-modal="true" aria-labelledby="secretaryNoMovementTitle">
+            <h3 id="secretaryNoMovementTitle">SEGUIMIENTO DE REGISTROS SIN MOVIMIENTO</h3>
+            <p class="helper-text">Registros con 8 o mas dias desde su primer comentario y con un solo comentario total.</p>
+            <form id="secretaryNoMovementFilterForm" class="date-range-form" autocomplete="off">
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="secretaryNoMovementFilterRegion">REGION</label>
+                        <select id="secretaryNoMovementFilterRegion">
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="secretaryNoMovementFilterComuna">COMUNA</label>
+                        <select id="secretaryNoMovementFilterComuna" disabled>
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="secretaryNoMovementFilterSucursal">SUCURSAL</label>
+                        <select id="secretaryNoMovementFilterSucursal">
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="secretaryNoMovementFilterFrom">DESDE FECHA INGRESO</label>
+                        <input type="date" id="secretaryNoMovementFilterFrom">
+                    </div>
+                    <div class="form-group">
+                        <label for="secretaryNoMovementFilterTo">HASTA FECHA INGRESO</label>
+                        <input type="date" id="secretaryNoMovementFilterTo">
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <div class="secretary-followup-filter-actions">
+                            <button type="submit" id="secretaryNoMovementApplyBtn" class="buscar">FILTRAR</button>
+                            <button type="button" id="secretaryNoMovementClearBtn" class="limpiar">LIMPIAR</button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+            <div class="history-wrapper secretary-followup-table-wrapper">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>NRO INGRESO</th>
+                            <th>FECHA INGRESO</th>
+                            <th>DIAS</th>
+                            <th>NOMBRE</th>
+                            <th>RUT</th>
+                            <th>SUCURSAL</th>
+                            <th>REGION</th>
+                            <th>COMUNA</th>
+                        </tr>
+                    </thead>
+                    <tbody id="secretaryNoMovementBody">
+                        <tr>
+                            <td colspan="8">Sin registros pendientes para mostrar.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="secretaryNoMovementMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="secretaryNoMovementCloseBtn" class="guardar">ENTENDIDO</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="operatorDocAlertsOverlay" class="modal-overlay hidden">
+        <div class="modal-card operator-doc-alerts-modal-card" role="dialog" aria-modal="true" aria-labelledby="operatorDocAlertsTitle">
+            <h3 id="operatorDocAlertsTitle">DOCUMENTOS NUEVOS POR REVISAR</h3>
+            <p class="helper-text">Marca REVISADO para retirar el item de esta lista.</p>
+            <div class="history-wrapper operator-doc-alerts-table-wrapper">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>NRO INGRESO</th>
+                            <th>FECHA</th>
+                            <th>SUCURSAL</th>
+                            <th>DOCUMENTOS AGREGADOS</th>
+                            <th>REVISADO</th>
+                        </tr>
+                    </thead>
+                    <tbody id="operatorDocAlertsBody">
+                        <tr>
+                            <td colspan="5">Sin documentos nuevos por revisar.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="operatorDocAlertsMessage" class="form-message" role="status" aria-live="polite"></p>
+            <div class="invoice-modal-actions">
+                <button type="button" id="operatorDocAlertsRefreshBtn" class="buscar">ACTUALIZAR</button>
+                <button type="button" id="operatorDocAlertsCloseBtn" class="limpiar">CERRAR</button>
+            </div>
+        </div>
+    </div>
+
     <div id="dateRangeModalOverlay" class="modal-overlay hidden">
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dateRangeModalTitle">
             <h3 id="dateRangeModalTitle">BUSCAR REGISTROS POR FECHA</h3>
@@ -810,7 +965,19 @@
                         </select>
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row form-row-triple">
+                    <div class="form-group">
+                        <label for="dateRangeRegion">REGION</label>
+                        <select id="dateRangeRegion">
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="dateRangeComuna">COMUNA</label>
+                        <select id="dateRangeComuna" disabled>
+                            <option value="">TODAS</option>
+                        </select>
+                    </div>
                     <div class="form-group">
                         <label>&nbsp;</label>
                         <button type="submit" id="dateRangeSearchBtn" class="buscar">BUSCAR RANGO</button>
@@ -846,6 +1013,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260323-04"></script>
+    <script src="script.js?v=20260326-10"></script>
 </body>
 </html>
