@@ -319,6 +319,25 @@ textarea {
     resize: vertical;
 }
 
+.docs-groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.docs-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.docs-group-title {
+    margin: 0;
+    color: #2a3d6b;
+    font-size: 0.88em;
+    font-weight: 700;
+}
+
 .docs-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -349,6 +368,13 @@ textarea {
     color: #2a3d6b;
     font-weight: 600;
     font-size: 0.9em;
+}
+
+.docs-group-empty {
+    margin: 0;
+    color: #2a3d6b;
+    font-size: 0.85em;
+    font-weight: 600;
 }
 
 .button-row {
@@ -552,6 +578,59 @@ button {
     margin-bottom: 8px;
 }
 
+#adminMailTemplateEditor {
+    font-family: 'Consolas', 'Courier New', monospace;
+    min-height: 280px;
+}
+
+.admin-mail-template-preview-wrap {
+    margin-top: 10px;
+    border: 1px solid #cdd9ee;
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.admin-mail-template-preview-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px;
+}
+
+.admin-mail-template-count-controls {
+    margin: 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    width: 220px;
+    flex: 0 0 220px;
+}
+
+.admin-mail-template-count-controls .admin-cancel-btn {
+    width: auto;
+    margin-top: 0;
+    min-width: 0;
+}
+
+.admin-mail-template-count-controls .helper-text {
+    margin: 0;
+    font-weight: 700;
+    text-align: center;
+}
+
+#adminMailTemplatePreviewFrame {
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 430px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+}
+
 #adminUserForm .form-row.form-row-triple:nth-of-type(2) .form-group:not(.admin-create-wrap) > label {
     min-height: 38px;
     display: flex;
@@ -631,6 +710,31 @@ button {
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.86em;
     color: #2a3d6b;
+}
+
+.admin-doc-groups-editor {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.admin-doc-group-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+}
+
+.admin-doc-group-item span {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #2a3d6b;
+}
+
+.admin-doc-group-save-btn {
+    margin-top: 8px;
+    width: auto;
+    min-width: 220px;
 }
 
 .history-wrapper {
@@ -943,8 +1047,42 @@ button {
         gap: 0;
     }
 
+    .docs-groups {
+        grid-template-columns: 1fr;
+    }
+
     .docs-grid {
         grid-template-columns: 1fr;
+    }
+
+    .admin-doc-groups-editor {
+        grid-template-columns: 1fr;
+    }
+
+    #adminMailTemplatePreviewFrame {
+        min-height: 300px;
+    }
+
+    .admin-mail-template-preview-layout {
+        flex-direction: column;
+    }
+
+    .admin-mail-template-count-controls {
+        width: 100%;
+        flex: 1 1 auto;
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .admin-mail-template-count-controls .admin-cancel-btn {
+        min-width: 0;
+        flex: 1;
+    }
+
+    .admin-mail-template-count-controls .helper-text {
+        width: 100%;
+        text-align: left;
     }
 
     .button-row {

@@ -6,7 +6,7 @@
     <meta name="geo-rural-api-base" content="">
     <title>Formulario de Registro - Geo Rural</title>
     <link rel="icon" type="image/png" href="/logo.png">
-    <link rel="stylesheet" href="styles.css?v=20260326-01">
+    <link rel="stylesheet" href="styles.css?v=20260327-03">
 </head>
 <body>
     <div id="appTopPanels" class="app-top-panels hidden">
@@ -22,6 +22,7 @@
                 <button type="button" id="adminToggleBranchesBtn" class="admin-menu-btn">GESTIONAR SUCURSALES</button>
                 <button type="button" id="adminToggleDocumentsBtn" class="admin-menu-btn">GESTIONAR DOCUMENTOS</button>
                 <button type="button" id="adminToggleEmailBtn" class="admin-menu-btn hidden">CONFIGURAR CORREO</button>
+                <button type="button" id="adminToggleMailTemplatesBtn" class="admin-menu-btn hidden">PLANTILLAS CORREO</button>
                 <button type="button" id="adminToggleUsageBtn" class="admin-menu-btn hidden">EQUIPOS ACTIVOS</button>
                 <button type="button" id="secretariaViewInvoicesBtn" class="admin-menu-btn hidden">FACTURAS SOLICITADAS</button>
                 <button type="button" id="secretariaQuotationBtn" class="admin-menu-btn hidden">COTIZACION</button>
@@ -133,9 +134,22 @@
                             <label for="adminDocumentLabel">NOMBRE DEL DOCUMENTO</label>
                             <input type="text" id="adminDocumentLabel" required>
                         </div>
+                        <div class="form-group">
+                            <label for="adminDocumentGroup">SECCION DEL DOCUMENTO</label>
+                            <select id="adminDocumentGroup"></select>
+                        </div>
                         <div class="form-group admin-create-wrap">
                             <button type="button" id="adminDocumentSaveBtn" class="admin-create-btn">AGREGAR DOCUMENTO</button>
                             <button type="button" id="adminDocumentCancelBtn" class="admin-cancel-btn hidden">CANCELAR EDICION</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>TITULOS DE SECCIONES (5)</label>
+                            <div id="adminDocumentGroupTitles" class="admin-doc-groups-editor"></div>
+                            <button type="button" id="adminDocumentGroupSaveBtn" class="admin-create-btn admin-doc-group-save-btn">
+                                GUARDAR TITULOS DE SECCIONES
+                            </button>
                         </div>
                     </div>
                     <p class="helper-text">Estos cambios son visuales y se guardan localmente en este navegador (no en base de datos).</p>
@@ -147,12 +161,13 @@
                             <tr>
                                 <th>Documento</th>
                                 <th>Identificador</th>
+                                <th>Seccion</th>
                                 <th>Accion</th>
                             </tr>
                         </thead>
                         <tbody id="adminDocumentsBody">
                             <tr>
-                                <td colspan="3">Sin documentos para mostrar.</td>
+                                <td colspan="4">Sin documentos para mostrar.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -211,6 +226,46 @@
                 </div>
                 <p id="adminEmailSource" class="helper-text"></p>
                 <p id="adminEmailMessage" class="form-message" role="status" aria-live="polite"></p>
+            </section>
+
+            <section id="adminMailTemplatesSection" class="admin-users-section hidden">
+                <h4>PLANTILLAS VISUALES DE CORREO</h4>
+                <div id="adminMailTemplatesForm" class="admin-form" role="group" aria-label="Editar plantillas visuales de correo">
+                    <div class="form-row form-row-triple">
+                        <div class="form-group">
+                            <label for="adminMailTemplateType">TIPO DE CORREO</label>
+                            <select id="adminMailTemplateType">
+                                <option value="cotizacionHtml">COTIZACION AL CLIENTE</option>
+                                <option value="facturaSingleHtml">FACTURA AL CONTADOR (INDIVIDUAL)</option>
+                                <option value="facturaPendingHtml">FACTURA AL CONTADOR (LISTA PENDIENTE)</option>
+                            </select>
+                        </div>
+                        <div class="form-group admin-create-wrap">
+                            <button type="button" id="adminMailTemplatePreviewBtn" class="admin-cancel-btn">ACTUALIZAR VISTA PREVIA</button>
+                            <button type="button" id="adminMailTemplateReloadBtn" class="admin-cancel-btn">RECARGAR PLANTILLAS</button>
+                            <button type="button" id="adminMailTemplateSaveBtn" class="admin-create-btn">GUARDAR PLANTILLAS</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="adminMailTemplateEditor">CUERPO HTML (USA TOKENS {{...}})</label>
+                            <textarea id="adminMailTemplateEditor" rows="16" spellcheck="false"></textarea>
+                        </div>
+                    </div>
+                    <p id="adminMailTemplateHints" class="helper-text"></p>
+                    <div class="admin-mail-template-preview-wrap">
+                        <div class="admin-mail-template-preview-layout">
+                            <iframe id="adminMailTemplatePreviewFrame" title="Vista previa plantilla correo"></iframe>
+                            <div id="adminMailTemplatePendingControls" class="admin-mail-template-count-controls hidden">
+                                <button type="button" id="adminMailTemplatePendingLessBtn" class="admin-cancel-btn">- MENOS FACTURAS</button>
+                                <span id="adminMailTemplatePendingCountLabel" class="helper-text">Vista previa: 2 facturas</span>
+                                <button type="button" id="adminMailTemplatePendingMoreBtn" class="admin-cancel-btn">+ MAS FACTURAS</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <p id="adminMailTemplateSource" class="helper-text"></p>
+                <p id="adminMailTemplateMessage" class="form-message" role="status" aria-live="polite"></p>
             </section>
 
             <section id="adminUsageSection" class="admin-users-section hidden">
@@ -502,17 +557,42 @@
 
                     <div class="form-group">
                         <label>DOCUMENTACION RECIBIDA</label>
-                        <div class="docs-grid" id="documentosContainer">
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="cedula"> Cedula representante</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="rut_documento"> RUT cliente</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="dominio_vigente"> Certificado dominio vigente</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="plano_predial"> Plano predial</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="escritura"> Escritura propiedad</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="avaluo_fiscal"> Certificado avaluo fiscal</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="poder"> Poder simple/notarial</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="domicilio"> Comprobante domicilio</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="solicitud_firmada"> Solicitud firmada</label>
-                            <label class="doc-item"><input type="checkbox" name="documentos" value="otros_antecedentes"> Otros antecedentes</label>
+                        <div class="docs-groups" id="documentosContainer">
+                            <section class="docs-group" data-doc-group-id="grupo_1" data-doc-group-title="Identificacion del cliente">
+                                <h5 class="docs-group-title">Identificacion del cliente</h5>
+                                <div class="docs-grid">
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="cedula"> Cedula representante</label>
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="rut_documento"> RUT cliente</label>
+                                </div>
+                            </section>
+                            <section class="docs-group" data-doc-group-id="grupo_2" data-doc-group-title="Documentos de propiedad">
+                                <h5 class="docs-group-title">Documentos de propiedad</h5>
+                                <div class="docs-grid">
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="dominio_vigente"> Certificado dominio vigente</label>
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="escritura"> Escritura propiedad</label>
+                                </div>
+                            </section>
+                            <section class="docs-group" data-doc-group-id="grupo_3" data-doc-group-title="Antecedentes tecnicos">
+                                <h5 class="docs-group-title">Antecedentes tecnicos</h5>
+                                <div class="docs-grid">
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="plano_predial"> Plano predial</label>
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="avaluo_fiscal"> Certificado avaluo fiscal</label>
+                                </div>
+                            </section>
+                            <section class="docs-group" data-doc-group-id="grupo_4" data-doc-group-title="Soportes complementarios">
+                                <h5 class="docs-group-title">Soportes complementarios</h5>
+                                <div class="docs-grid">
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="poder"> Poder simple/notarial</label>
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="domicilio"> Comprobante domicilio</label>
+                                </div>
+                            </section>
+                            <section class="docs-group" data-doc-group-id="grupo_5" data-doc-group-title="Documentos adicionales">
+                                <h5 class="docs-group-title">Documentos adicionales</h5>
+                                <div class="docs-grid">
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="solicitud_firmada"> Solicitud firmada</label>
+                                    <label class="doc-item"><input type="checkbox" name="documentos" value="otros_antecedentes"> Otros antecedentes</label>
+                                </div>
+                            </section>
                         </div>
                     </div>
                     <div id="comentariosHistorySideAnchor"></div>
@@ -755,6 +835,15 @@
                         placeholder="Opcional: nombre, nro de ingreso, predio, comuna, etc."
                     ></textarea>
                     <p class="helper-text">Este campo es opcional y solo personaliza el correo.</p>
+                </div>
+                <div class="form-group">
+                    <label for="secretariaQuotationParcelamientoRange">RANGO DE PARCELAMIENTO (OPCIONAL)</label>
+                    <select id="secretariaQuotationParcelamientoRange">
+                        <option value="">Sin tramo especifico (enviar tabla completa)</option>
+                    </select>
+                    <p class="helper-text">
+                        Si seleccionas un tramo, el correo enviara solo ese tramo. Si no seleccionas, se enviara la tabla completa.
+                    </p>
                 </div>
                 <p id="secretariaQuotationSource" class="helper-text"></p>
                 <div class="history-wrapper quote-table-wrapper">
@@ -1013,6 +1102,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260326-10"></script>
+    <script src="script.js?v=20260327-06"></script>
 </body>
 </html>

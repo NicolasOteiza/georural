@@ -5,13 +5,26 @@ const API_BASE_FALLBACKS = resolveApiFallbackBases(API_BASE);
 const AUTH_TOKEN_STORAGE = 'geo_rural_auth_token';
 const API_KEY_STORAGE = 'geo_rural_api_key';
 const DOCUMENT_OPTIONS_STORAGE = 'geo_rural_document_options';
+const DOCUMENT_OPTIONS_STORAGE_VERSION = 2;
+const DOCUMENT_GROUP_IDS = ['grupo_1', 'grupo_2', 'grupo_3', 'grupo_4', 'grupo_5'];
+const DEFAULT_DOCUMENT_GROUP_TITLES = [
+    'Identificacion del cliente',
+    'Documentos de propiedad',
+    'Antecedentes tecnicos',
+    'Soportes complementarios',
+    'Documentos adicionales'
+];
 const OPERATOR_LAST_DEST_EMAIL_STORAGE = 'geo_rural_last_invoice_destination_email';
 const SECRETARY_DAILY_ALERT_STORAGE_PREFIX = 'geo_rural_secretary_no_movement_seen_';
 const SECRETARY_NO_MOVEMENT_DAYS = 8;
-const APP_BUILD = '2026-03-26-10';
+const APP_BUILD = '2026-03-27-06';
 const MAIL_SEND_PROGRESS_MIN_MS = 1600;
 const MAIL_SEND_PROGRESS_FINAL_MS = 900;
 const REQUESTED_INVOICES_PAGE_SIZE = 5;
+const MAIL_TEMPLATE_TYPES = Object.freeze(['cotizacionHtml', 'facturaSingleHtml', 'facturaPendingHtml']);
+const ADMIN_PENDING_MAIL_PREVIEW_MIN_ITEMS = 1;
+const ADMIN_PENDING_MAIL_PREVIEW_MAX_ITEMS = 10;
+const ADMIN_PENDING_MAIL_PREVIEW_DEFAULT_ITEMS = 2;
 const MONTH_NAMES_ES = [
     'enero',
     'febrero',
@@ -373,7 +386,9 @@ let editingAdminUserRole = '';
 let editingBranchId = null;
 let editingDocumentValue = '';
 let availableBranches = [];
+let defaultDocumentGroups = [];
 let defaultDocumentOptions = [];
+let configuredDocumentGroups = [];
 let configuredDocumentOptions = [];
 let loadedRecordUnknownDocuments = [];
 let loadedComentarioOriginal = '';
@@ -398,6 +413,11 @@ let pendingMonthlyUtmStatus = null;
 let secretariaQuotationSummary = null;
 let secretariaQuotationTemplateMetadata = null;
 let adminEmailConfigLoaded = null;
+let runtimeMailTemplates = null;
+let adminMailTemplatesLoaded = null;
+let adminMailTemplateDrafts = null;
+let adminMailTemplateActiveType = 'cotizacionHtml';
+let adminMailTemplatePendingPreviewCount = ADMIN_PENDING_MAIL_PREVIEW_DEFAULT_ITEMS;
 let adminUsageStatsLoaded = null;
 let mailSendProgressOpenedAt = 0;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
@@ -452,11 +472,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminBranchesSection: document.getElementById('adminBranchesSection'),
         adminDocumentsSection: document.getElementById('adminDocumentsSection'),
         adminEmailSection: document.getElementById('adminEmailSection'),
+        adminMailTemplatesSection: document.getElementById('adminMailTemplatesSection'),
         adminUsageSection: document.getElementById('adminUsageSection'),
         adminToggleUsersBtn: document.getElementById('adminToggleUsersBtn'),
         adminToggleBranchesBtn: document.getElementById('adminToggleBranchesBtn'),
         adminToggleDocumentsBtn: document.getElementById('adminToggleDocumentsBtn'),
         adminToggleEmailBtn: document.getElementById('adminToggleEmailBtn'),
+        adminToggleMailTemplatesBtn: document.getElementById('adminToggleMailTemplatesBtn'),
         adminToggleUsageBtn: document.getElementById('adminToggleUsageBtn'),
         secretariaViewInvoicesBtn: document.getElementById('secretariaViewInvoicesBtn'),
         secretariaQuotationBtn: document.getElementById('secretariaQuotationBtn'),
@@ -482,8 +504,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminBranchesBody: document.getElementById('adminBranchesBody'),
         adminDocumentForm: document.getElementById('adminDocumentForm'),
         adminDocumentLabel: document.getElementById('adminDocumentLabel'),
+        adminDocumentGroup: document.getElementById('adminDocumentGroup'),
         adminDocumentSaveBtn: document.getElementById('adminDocumentSaveBtn'),
         adminDocumentCancelBtn: document.getElementById('adminDocumentCancelBtn'),
+        adminDocumentGroupTitles: document.getElementById('adminDocumentGroupTitles'),
+        adminDocumentGroupSaveBtn: document.getElementById('adminDocumentGroupSaveBtn'),
         adminDocumentMessage: document.getElementById('adminDocumentMessage'),
         adminDocumentsBody: document.getElementById('adminDocumentsBody'),
         adminEmailForm: document.getElementById('adminEmailForm'),
@@ -499,6 +524,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminEmailSaveBtn: document.getElementById('adminEmailSaveBtn'),
         adminEmailSource: document.getElementById('adminEmailSource'),
         adminEmailMessage: document.getElementById('adminEmailMessage'),
+        adminMailTemplateType: document.getElementById('adminMailTemplateType'),
+        adminMailTemplateEditor: document.getElementById('adminMailTemplateEditor'),
+        adminMailTemplatePreviewBtn: document.getElementById('adminMailTemplatePreviewBtn'),
+        adminMailTemplateReloadBtn: document.getElementById('adminMailTemplateReloadBtn'),
+        adminMailTemplateSaveBtn: document.getElementById('adminMailTemplateSaveBtn'),
+        adminMailTemplateHints: document.getElementById('adminMailTemplateHints'),
+        adminMailTemplatePreviewFrame: document.getElementById('adminMailTemplatePreviewFrame'),
+        adminMailTemplatePendingControls: document.getElementById('adminMailTemplatePendingControls'),
+        adminMailTemplatePendingLessBtn: document.getElementById('adminMailTemplatePendingLessBtn'),
+        adminMailTemplatePendingMoreBtn: document.getElementById('adminMailTemplatePendingMoreBtn'),
+        adminMailTemplatePendingCountLabel: document.getElementById('adminMailTemplatePendingCountLabel'),
+        adminMailTemplateSource: document.getElementById('adminMailTemplateSource'),
+        adminMailTemplateMessage: document.getElementById('adminMailTemplateMessage'),
         adminUsageSummary: document.getElementById('adminUsageSummary'),
         adminUsageRefreshBtn: document.getElementById('adminUsageRefreshBtn'),
         adminUsageBody: document.getElementById('adminUsageBody'),
@@ -595,6 +633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         secretariaQuotationPeriod: document.getElementById('secretariaQuotationPeriod'),
         secretariaQuotationUtmValue: document.getElementById('secretariaQuotationUtmValue'),
         secretariaQuotationReference: document.getElementById('secretariaQuotationReference'),
+        secretariaQuotationParcelamientoRange: document.getElementById('secretariaQuotationParcelamientoRange'),
         secretariaQuotationSource: document.getElementById('secretariaQuotationSource'),
         secretariaQuotationItemsBody: document.getElementById('secretariaQuotationItemsBody'),
         secretariaQuotationTotals: document.getElementById('secretariaQuotationTotals'),
@@ -776,6 +815,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ui.adminToggleEmailBtn) {
         ui.adminToggleEmailBtn.addEventListener('click', () => void handleAdminToggleEmail());
     }
+    if (ui.adminToggleMailTemplatesBtn) {
+        ui.adminToggleMailTemplatesBtn.addEventListener('click', () => void handleAdminToggleMailTemplates());
+    }
     if (ui.adminToggleUsageBtn) {
         ui.adminToggleUsageBtn.addEventListener('click', () => void handleAdminToggleUsage());
     }
@@ -813,9 +855,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ui.adminDocumentCancelBtn) {
         ui.adminDocumentCancelBtn.addEventListener('click', handleAdminDocumentCancel);
     }
+    if (ui.adminDocumentGroupSaveBtn) {
+        ui.adminDocumentGroupSaveBtn.addEventListener('click', handleAdminDocumentGroupTitlesSave);
+    }
     if (ui.adminDocumentForm) {
         ui.adminDocumentForm.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
+                const insideGroupEditor = Boolean(event.target?.closest?.('#adminDocumentGroupTitles'));
+                if (insideGroupEditor) {
+                    event.preventDefault();
+                    void handleAdminDocumentGroupTitlesSave();
+                    return;
+                }
                 event.preventDefault();
                 void handleAdminDocumentSave();
             }
@@ -826,6 +877,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.adminEmailSaveBtn) {
         ui.adminEmailSaveBtn.addEventListener('click', () => void handleAdminEmailSave());
+    }
+    if (ui.adminMailTemplateType) {
+        ui.adminMailTemplateType.addEventListener('change', () => {
+            persistCurrentAdminTemplateEditorValue();
+            adminMailTemplateActiveType = normalizeMailTemplateType(ui.adminMailTemplateType.value);
+            renderAdminMailTemplateEditor(adminMailTemplateActiveType);
+            renderAdminMailTemplatePreview(adminMailTemplateActiveType);
+        });
+    }
+    if (ui.adminMailTemplatePreviewBtn) {
+        ui.adminMailTemplatePreviewBtn.addEventListener('click', () => {
+            persistCurrentAdminTemplateEditorValue();
+            renderAdminMailTemplatePreview(adminMailTemplateActiveType);
+        });
+    }
+    if (ui.adminMailTemplateReloadBtn) {
+        ui.adminMailTemplateReloadBtn.addEventListener('click', () => void loadAdminMailTemplates());
+    }
+    if (ui.adminMailTemplateSaveBtn) {
+        ui.adminMailTemplateSaveBtn.addEventListener('click', () => void handleAdminMailTemplatesSave());
+    }
+    if (ui.adminMailTemplateEditor) {
+        ui.adminMailTemplateEditor.addEventListener('input', () => {
+            persistCurrentAdminTemplateEditorValue();
+        });
+    }
+    if (ui.adminMailTemplatePendingLessBtn) {
+        ui.adminMailTemplatePendingLessBtn.addEventListener('click', () => {
+            setAdminMailTemplatePendingPreviewCount(adminMailTemplatePendingPreviewCount - 1);
+            renderAdminMailTemplatePreview(adminMailTemplateActiveType);
+        });
+    }
+    if (ui.adminMailTemplatePendingMoreBtn) {
+        ui.adminMailTemplatePendingMoreBtn.addEventListener('click', () => {
+            setAdminMailTemplatePendingPreviewCount(adminMailTemplatePendingPreviewCount + 1);
+            renderAdminMailTemplatePreview(adminMailTemplateActiveType);
+        });
     }
     if (ui.adminUsageRefreshBtn) {
         ui.adminUsageRefreshBtn.addEventListener('click', () => void loadAdminUsageStats());
@@ -1190,23 +1278,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     ui.registroForm.addEventListener('input', syncPendingLoadedChangesFromForm);
     ui.registroForm.addEventListener('change', syncPendingLoadedChangesFromForm);
 
-    ui.btnLimpiar.addEventListener('click', (event) => {
-        if (hasPendingLoadedRegistroChanges()) {
-            event.preventDefault();
-            showPendingModifyRequiredWarningPopup();
-            syncPendingLoadedChangesInterlock({ canSearch: true, canClear: true, forceWarningMessage: true });
-            return;
-        }
-    });
-
     ui.registroForm.addEventListener('reset', (event) => {
         if (suppressResetHandler) {
-            return;
-        }
-        if (hasPendingLoadedRegistroChanges()) {
-            event.preventDefault();
-            showPendingModifyRequiredWarningPopup();
-            syncPendingLoadedChangesInterlock({ canSearch: true, canClear: true, forceWarningMessage: true });
             return;
         }
         requestAnimationFrame(async () => {
@@ -1370,6 +1443,7 @@ async function activateAuthenticatedUser(user, options = {}) {
 
     pendingMonthlyUtmStatus = monthlyUtmStatus || null;
     showAppForUser(currentUser);
+    await loadRuntimeMailTemplates({ showErrors: false });
     await loadNextIngreso(ui.numIngreso, ui.formMessage);
     renderHistory([]);
     void maybeShowSecretaryNoMovementAlert(currentUser);
@@ -1459,6 +1533,9 @@ function showAppForUser(user) {
         if (ui.adminToggleEmailBtn) {
             ui.adminToggleEmailBtn.classList.toggle('hidden', !isSuperUser(user));
         }
+        if (ui.adminToggleMailTemplatesBtn) {
+            ui.adminToggleMailTemplatesBtn.classList.toggle('hidden', !isSuperUser(user));
+        }
         if (ui.adminToggleUsageBtn) {
             ui.adminToggleUsageBtn.classList.toggle('hidden', !isSuperUser(user));
         }
@@ -1481,6 +1558,7 @@ function showAppForUser(user) {
         setAdminBranchesVisibility(false);
         setAdminDocumentsVisibility(false);
         setAdminEmailVisibility(false);
+        setAdminMailTemplatesVisibility(false);
         setAdminUsageVisibility(false);
         adminIngresoMode = 'current';
         void setAdminIngresoMode('current', { refreshIngreso: false });
@@ -1492,9 +1570,11 @@ function showAppForUser(user) {
             exitDocumentEditMode();
             if (isSuperUser(user)) {
                 void loadAdminEmailConfig();
+                void loadAdminMailTemplates();
                 void loadAdminUsageStats();
             } else {
                 clearAdminEmailConfigState();
+                clearAdminMailTemplatesState();
                 clearAdminUsageStatsState();
             }
         } else {
@@ -1504,11 +1584,13 @@ function showAppForUser(user) {
             populateAdminSucursalSelect([]);
             exitDocumentEditMode();
             clearAdminEmailConfigState();
+            clearAdminMailTemplatesState();
             clearAdminUsageStatsState();
             setFormMessage(ui.adminMessage, '', '');
             setFormMessage(ui.adminBranchMessage, '', '');
             setFormMessage(ui.adminDocumentMessage, '', '');
             setFormMessage(ui.adminEmailMessage, '', '');
+            setFormMessage(ui.adminMailTemplateMessage, '', '');
             setFormMessage(ui.adminUsageMessage, '', '');
         }
     } else {
@@ -1529,6 +1611,9 @@ function showAppForUser(user) {
         }
         if (ui.adminToggleEmailBtn) {
             ui.adminToggleEmailBtn.classList.add('hidden');
+        }
+        if (ui.adminToggleMailTemplatesBtn) {
+            ui.adminToggleMailTemplatesBtn.classList.add('hidden');
         }
         if (ui.adminToggleUsageBtn) {
             ui.adminToggleUsageBtn.classList.add('hidden');
@@ -2060,6 +2145,18 @@ function saveLoadedRegistroSnapshot() {
     loadedRegistroSnapshot = buildCurrentRegistroSnapshot();
 }
 
+function syncLoadedFacturaSnapshotWithCurrentForm() {
+    if (!loadedIngresoOriginal || !loadedRegistroSnapshot) {
+        return false;
+    }
+    const currentSnapshot = buildCurrentRegistroSnapshot();
+    loadedRegistroSnapshot = {
+        ...loadedRegistroSnapshot,
+        factura: currentSnapshot.factura
+    };
+    return true;
+}
+
 function clearLoadedRegistroSnapshot() {
     loadedRegistroSnapshot = null;
 }
@@ -2083,7 +2180,7 @@ function syncPendingLoadedChangesInterlock({ canSearch = true, canClear = true, 
         ui.btnBuscarFecha.disabled = !(canSearch && !hasPendingLoadedChanges);
     }
     if (ui?.btnLimpiar) {
-        ui.btnLimpiar.disabled = !(canClear && !hasPendingLoadedChanges);
+        ui.btnLimpiar.disabled = !canClear;
     }
 
     const currentFormMessage = String(ui?.formMessage?.textContent || '').trim();
@@ -3072,6 +3169,42 @@ function renderSecretariaQuotationItems(servicios) {
     });
 }
 
+function renderSecretariaQuotationParcelamientoRanges(parcelamientoRows, selectedKey = '') {
+    if (!ui || !ui.secretariaQuotationParcelamientoRange) {
+        return;
+    }
+
+    const select = ui.secretariaQuotationParcelamientoRange;
+    const currentValue = normalizeInvoiceText(selectedKey || select.value, 80);
+    select.innerHTML = '';
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Sin tramo especifico (enviar tabla completa)';
+    select.appendChild(defaultOption);
+
+    if (!Array.isArray(parcelamientoRows) || parcelamientoRows.length === 0) {
+        select.value = '';
+        return;
+    }
+
+    parcelamientoRows.forEach((item) => {
+        const key = normalizeInvoiceText(item?.key || item?.lotes, 80);
+        if (!key) {
+            return;
+        }
+        const lotes = normalizeInvoiceText(item?.lotes, 80) || key;
+        const total = formatInvoiceAmount(item?.total);
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = `${lotes} lotes (${total} total con IVA)`;
+        select.appendChild(option);
+    });
+
+    const canKeepSelection = Array.from(select.options).some((option) => option.value === currentValue);
+    select.value = canKeepSelection ? currentValue : '';
+}
+
 function applySecretariaQuotationSummary(summary) {
     secretariaQuotationSummary = summary || null;
     if (!ui) {
@@ -3112,6 +3245,7 @@ function applySecretariaQuotationSummary(summary) {
             ui.secretariaQuotationTotals.textContent = '';
         }
     }
+    renderSecretariaQuotationParcelamientoRanges(summary?.parcelamiento || [], ui.secretariaQuotationParcelamientoRange?.value || '');
     renderSecretariaQuotationItems(summary?.servicios || []);
 }
 
@@ -3154,6 +3288,9 @@ async function handleOpenSecretariaQuotationModal() {
     if (ui.secretariaQuotationReference) {
         ui.secretariaQuotationReference.value = '';
     }
+    if (ui.secretariaQuotationParcelamientoRange) {
+        ui.secretariaQuotationParcelamientoRange.value = '';
+    }
 
     const loadTasks = [refreshSecretariaQuotationSummary({ showErrors: true })];
     if (isSuperUser(currentUser)) {
@@ -3187,6 +3324,7 @@ async function handleSendSecretariaQuotation(event) {
     }
     const destinationEmail = normalizeInvoiceText(ui.secretariaQuotationClientEmail?.value, 255).toLowerCase();
     const referenciaCliente = normalizeInvoiceText(ui.secretariaQuotationReference?.value, 500);
+    const parcelamientoRangeKey = normalizeInvoiceText(ui.secretariaQuotationParcelamientoRange?.value, 80);
     if (!clientName) {
         setFormMessage(ui.secretariaQuotationMessage, 'Debes ingresar el nombre del cliente.', 'error');
         return;
@@ -3223,7 +3361,8 @@ async function handleSendSecretariaQuotation(event) {
         const buildPayload = (referenceValue) => ({
             clientName,
             destinationEmail,
-            referenciaCliente: referenceValue
+            referenciaCliente: referenceValue,
+            parcelamientoRangeKey
         });
         let result;
         try {
@@ -4530,8 +4669,8 @@ function setFacturaFieldIfEmpty(field, value, options = {}) {
 }
 
 function buildMainFormContactoSuggestion() {
-    const telefono = normalizeInvoiceText(document.getElementById('telefono')?.value, 40);
-    return telefono;
+    const correo = normalizeEmailValue(document.getElementById('correo')?.value);
+    return normalizeInvoiceText(correo, 255);
 }
 
 function syncFacturaFromMainForm(options = {}) {
@@ -5006,6 +5145,15 @@ function buildSingleInvoiceEmailHtml(item) {
         </div>
     `.trim();
 
+    const customTemplate = getRuntimeMailTemplateHtml('facturaSingleHtml');
+    if (customTemplate) {
+        return applyMailTemplateHtmlString(customTemplate, {
+            TITULO: 'Solicitud de facturacion',
+            RESUMEN_FILAS_HTML: summaryRowsHtml,
+            DETALLE_FILAS_HTML: detailRowsHtml
+        });
+    }
+
     return buildInvoiceEmailCardHtml('Solicitud de facturacion', summaryRowsHtml, contentHtml);
 }
 
@@ -5089,6 +5237,33 @@ function buildPendingInvoicesEmailHtml(items = operatorPendingInvoices) {
             ${detailSectionsHtml}
         </div>
     `.trim();
+
+    const summaryTableHtml = `
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:center;">#</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">NRO INGRESO</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CLIENTE / RAZON SOCIAL</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">MONTO</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CONTACTO</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${summaryTableRowsHtml}
+            </tbody>
+        </table>
+    `.trim();
+
+    const customTemplate = getRuntimeMailTemplateHtml('facturaPendingHtml');
+    if (customTemplate) {
+        return applyMailTemplateHtmlString(customTemplate, {
+            TITULO: 'Resumen de facturas pendientes',
+            RESUMEN_FILAS_HTML: summaryRowsHtml,
+            TABLA_RESUMEN_HTML: summaryTableHtml,
+            DETALLES_FACTURAS_HTML: detailSectionsHtml
+        });
+    }
 
     return buildInvoiceEmailCardHtml('Resumen de facturas pendientes', summaryRowsHtml, contentHtml);
 }
@@ -5335,6 +5510,7 @@ async function handleSendCurrentInvoiceToAccountant() {
         return;
     }
     let registerResult = null;
+    let shouldSyncFacturaSnapshot = false;
     const sendButtons = [ui?.operatorEmitInvoiceBtn, ui?.facturaEnviarContadorBtn].filter((button) => Boolean(button));
     sendButtons.forEach((button) => {
         button.disabled = true;
@@ -5346,6 +5522,7 @@ async function handleSendCurrentInvoiceToAccountant() {
         registerResult = await registerInvoiceRequestInDatabase(parsed.data, {
             estado: 'PENDIENTE'
         });
+        shouldSyncFacturaSnapshot = true;
         const subject = buildMailSubject(`Solicitud factura ${parsed.data.numIngreso || ''} ${parsed.data.nombreRazonSocial}`.trim());
         await sendInvoiceEmailViaSmtp({
             destinationEmail,
@@ -5360,6 +5537,9 @@ async function handleSendCurrentInvoiceToAccountant() {
         if (canUseSecretaryFeatures(currentUser)) {
             await refreshRequestedInvoicesHistory();
         }
+        if (syncLoadedFacturaSnapshotWithCurrentForm()) {
+            updateRegistroActionButtons();
+        }
         await hideMailSendProgress('Correo enviado correctamente.', 'success');
 
         setFormMessage(
@@ -5369,6 +5549,9 @@ async function handleSendCurrentInvoiceToAccountant() {
         );
         setFormMessage(ui.operatorInvoiceMessage, `Factura enviada al contador (${destinationEmail}).`, 'success');
     } catch (error) {
+        if (shouldSyncFacturaSnapshot && syncLoadedFacturaSnapshotWithCurrentForm()) {
+            updateRegistroActionButtons();
+        }
         await hideMailSendProgress('No fue posible enviar el correo.', 'error', {
             minDurationMs: MAIL_SEND_PROGRESS_MIN_MS,
             finalDurationMs: 1200
@@ -5433,6 +5616,10 @@ async function handleAddCurrentInvoiceToPending() {
         const appliedInline = applyFacturaInlineErrorMessage(error.message);
         setFormMessage(ui.facturaFormMessage, appliedInline ? '' : error.message, appliedInline ? '' : 'error');
         return;
+    }
+
+    if (syncLoadedFacturaSnapshotWithCurrentForm()) {
+        updateRegistroActionButtons();
     }
 
     const finalStatus = normalizeInvoiceRequestStatus(registerResult?.estado) || 'PENDIENTE';
@@ -5758,13 +5945,21 @@ function setAdminManagementView(view) {
     }
 
     let normalizedView =
-        view === 'users' || view === 'branches' || view === 'documents' || view === 'email' || view === 'usage'
+        view === 'users' ||
+        view === 'branches' ||
+        view === 'documents' ||
+        view === 'email' ||
+        view === 'mailTemplates' ||
+        view === 'usage'
             ? view
             : 'registro';
     if (!canManageAdminCatalogs(currentUser)) {
         normalizedView = 'registro';
     }
     if (normalizedView === 'email' && !isSuperUser(currentUser)) {
+        normalizedView = 'registro';
+    }
+    if (normalizedView === 'mailTemplates' && !isSuperUser(currentUser)) {
         normalizedView = 'registro';
     }
     if (normalizedView === 'usage' && !isSuperUser(currentUser)) {
@@ -5782,6 +5977,9 @@ function setAdminManagementView(view) {
     if (ui.adminEmailSection) {
         ui.adminEmailSection.classList.toggle('hidden', normalizedView !== 'email');
     }
+    if (ui.adminMailTemplatesSection) {
+        ui.adminMailTemplatesSection.classList.toggle('hidden', normalizedView !== 'mailTemplates');
+    }
     if (ui.adminUsageSection) {
         ui.adminUsageSection.classList.toggle('hidden', normalizedView !== 'usage');
     }
@@ -5791,6 +5989,9 @@ function setAdminManagementView(view) {
     }
     if (normalizedView !== 'email') {
         setFormMessage(ui.adminEmailMessage, '', '');
+    }
+    if (normalizedView !== 'mailTemplates') {
+        setFormMessage(ui.adminMailTemplateMessage, '', '');
     }
     if (normalizedView !== 'usage') {
         setFormMessage(ui.adminUsageMessage, '', '');
@@ -5836,6 +6037,15 @@ function setAdminEmailVisibility(isVisible) {
     setAdminManagementView(isVisible ? 'email' : 'registro');
 }
 
+function setAdminMailTemplatesVisibility(isVisible) {
+    if (!ui || !ui.adminMailTemplatesSection || !ui.adminToggleMailTemplatesBtn) {
+        return;
+    }
+
+    ui.adminToggleMailTemplatesBtn.textContent = 'PLANTILLAS CORREO';
+    setAdminManagementView(isVisible ? 'mailTemplates' : 'registro');
+}
+
 function setAdminUsageVisibility(isVisible) {
     if (!ui || !ui.adminUsageSection || !ui.adminToggleUsageBtn) {
         return;
@@ -5870,6 +6080,8 @@ function handleAdminToggleDocuments() {
     }
 
     setAdminDocumentsVisibility(true);
+    renderAdminDocumentGroupTitleInputs(configuredDocumentGroups);
+    renderAdminDocumentGroupSelect(configuredDocumentGroups);
     renderAdminDocuments(configuredDocumentOptions);
 }
 
@@ -5880,6 +6092,15 @@ async function handleAdminToggleEmail() {
 
     setAdminEmailVisibility(true);
     await loadAdminEmailConfig();
+}
+
+async function handleAdminToggleMailTemplates() {
+    if (!isSuperUser(currentUser)) {
+        return;
+    }
+
+    setAdminMailTemplatesVisibility(true);
+    await loadAdminMailTemplates();
 }
 
 async function handleAdminToggleUsage() {
@@ -6191,6 +6412,444 @@ async function handleAdminEmailSave() {
     } catch (error) {
         setFormMessage(ui.adminEmailMessage, error.message, 'error');
     }
+}
+
+function normalizeMailTemplateType(value) {
+    const normalized = String(value || '').trim();
+    return MAIL_TEMPLATE_TYPES.includes(normalized) ? normalized : MAIL_TEMPLATE_TYPES[0];
+}
+
+function normalizeMailTemplateHtmlValue(value, maxLength = 400000) {
+    const normalized = String(value || '').replace(/\u0000/g, '').trim();
+    if (!normalized) {
+        return '';
+    }
+    if (!Number.isInteger(maxLength) || maxLength <= 0) {
+        return normalized;
+    }
+    return normalized.slice(0, maxLength);
+}
+
+function normalizeMailTemplatesObject(rawTemplates) {
+    const source = rawTemplates && typeof rawTemplates === 'object' ? rawTemplates : {};
+    return {
+        cotizacionHtml: normalizeMailTemplateHtmlValue(source.cotizacionHtml),
+        facturaSingleHtml: normalizeMailTemplateHtmlValue(source.facturaSingleHtml),
+        facturaPendingHtml: normalizeMailTemplateHtmlValue(source.facturaPendingHtml)
+    };
+}
+
+function escapeTemplateTokenRegex(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyMailTemplateHtmlString(template, replacements = {}) {
+    let html = String(template || '');
+    const entries = replacements && typeof replacements === 'object' ? Object.entries(replacements) : [];
+    entries.forEach(([token, rawValue]) => {
+        const pattern = new RegExp(`{{\\s*${escapeTemplateTokenRegex(token)}\\s*}}`, 'gi');
+        html = html.replace(pattern, String(rawValue ?? ''));
+    });
+    return html;
+}
+
+function getRuntimeMailTemplateHtml(type) {
+    const normalizedType = normalizeMailTemplateType(type);
+    return normalizeMailTemplateHtmlValue(runtimeMailTemplates?.[normalizedType]);
+}
+
+function getMailTemplateHints(type) {
+    const normalizedType = normalizeMailTemplateType(type);
+    if (normalizedType === 'cotizacionHtml') {
+        return [
+            '{{SALUDO}}',
+            '{{FECHA}}',
+            '{{PERIODO_UTM}}',
+            '{{UTM_VIGENTE}}',
+            '{{REFERENCIA_BLOQUE_HTML}}',
+            '{{TRAMO_BLOQUE_HTML}}',
+            '{{TABLA_VALORES_HTML}}',
+            '{{PARRAFOS_POST_TABLA_HTML}}',
+            '{{ATENCION_NOMBRE}}',
+            '{{ATENCION_SUCURSAL}}',
+            '{{FIRMA_HTML}}',
+            '{{LOGO_HTML}}'
+        ];
+    }
+    if (normalizedType === 'facturaSingleHtml') {
+        return ['{{TITULO}}', '{{RESUMEN_FILAS_HTML}}', '{{DETALLE_FILAS_HTML}}'];
+    }
+    return ['{{TITULO}}', '{{RESUMEN_FILAS_HTML}}', '{{TABLA_RESUMEN_HTML}}', '{{DETALLES_FACTURAS_HTML}}'];
+}
+
+function buildCotizacionPreviewReplacements() {
+    const nowText = new Date().toLocaleString('es-CL');
+    const sampleTable = `
+        <table role="presentation" cellspacing="0" cellpadding="0" style="width:92%;max-width:680px;margin:0 auto;border-collapse:collapse;font-size:12px;color:#2d84d2;">
+            <thead>
+                <tr style="background:#e6f4ff;color:#1f74bf;">
+                    <th style="border:1px solid #d9deea;padding:6px 8px;text-align:left;">Tramo lotes</th>
+                    <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Valor UTM</th>
+                    <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Neto CLP</th>
+                    <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">IVA CLP</th>
+                    <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Total CLP</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="border:1px solid #d9deea;padding:6px 8px;">7 a 15</td>
+                    <td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">6,33</td>
+                    <td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">$ 439.321</td>
+                    <td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">$ 83.471</td>
+                    <td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">$ 522.792</td>
+                </tr>
+            </tbody>
+        </table>
+    `.trim();
+    const postTableParagraphs = `
+        <p style="margin:12px 0 6px 0;font-weight:700;color:#1f74bf;">2).- Alcance general de los valores informados:</p>
+        <p style="margin:0 0 6px 0;color:#2d84d2;">Los valores del cuadro son referenciales y corresponden al mes consultado.</p>
+    `.trim();
+    const signatureHtml = `
+        <div style="margin-top:18px;">
+            <p style="margin:0 0 16px 0;">Saludos cordiales,</p>
+            <p style="margin:0 0 10px 0;">Pedro Antonio Gerardo Herrera Mendez</p>
+            <p style="margin:0 0 10px 0;">Pedro Ignacio Albornoz Sateler</p>
+            <p style="margin:0 0 10px 0;font-weight:700;color:#1f74bf;">GEO RURAL VERIFICACIONES LIMITADA</p>
+            <p style="margin:0;">Uno Norte N° 801, oficina 306, Talca</p>
+        </div>
+    `.trim();
+    return {
+        SALUDO: 'Estimada/o Cliente de Prueba:',
+        FECHA: escapeHtml(nowText),
+        PERIODO_UTM: 'MARZO 2026',
+        UTM_VIGENTE: '$ 69.403',
+        REFERENCIA_BLOQUE_HTML: '<p style="margin:0 0 12px 0;"><strong>Referencia cliente:</strong> Carpeta SPR 7 lotes.</p>',
+        TRAMO_BLOQUE_HTML:
+            '<p style="margin:0 0 10px 0;"><strong>1).- Cotizacion por los servicios de verificacion:</strong></p><p style="margin:0 0 14px 0;">Tramo 7 a 15 lotes.</p>',
+        TABLA_VALORES_HTML: sampleTable,
+        PARRAFOS_POST_TABLA_HTML: postTableParagraphs,
+        ATENCION_NOMBRE: 'Administrador Geo Rural',
+        ATENCION_SUCURSAL: 'Casa Matriz',
+        FIRMA_HTML: signatureHtml,
+        LOGO_HTML: ''
+    };
+}
+
+function buildFacturaSinglePreviewReplacements() {
+    const sampleItem = {
+        numIngreso: '28-2026',
+        nombreRazonSocial: 'Cliente de Prueba SpA',
+        rut: '76.123.456-7',
+        giro: 'Servicios Profesionales',
+        direccion: 'Uno Norte 801, Oficina 306',
+        comuna: 'Talca',
+        ciudad: 'Maule',
+        contacto: 'cliente@correo.cl',
+        montoFacturar: '125000',
+        observacion: 'Factura para prueba de plantilla'
+    };
+    const summaryRowsHtml = `
+        <tr><td style="padding:0 0 6px;font-weight:700;color:#22365f;">Fecha</td><td style="padding:0 0 6px;">${escapeHtml(
+            new Date().toLocaleString('es-CL')
+        )}</td></tr>
+        <tr><td style="padding:0 0 6px;font-weight:700;color:#22365f;">Operador</td><td style="padding:0 0 6px;">Operador de Prueba</td></tr>
+        <tr><td style="padding:0 0 12px;font-weight:700;color:#22365f;">Sucursal</td><td style="padding:0 0 12px;">Casa Matriz</td></tr>
+    `.trim();
+    return {
+        TITULO: 'Solicitud de facturacion',
+        RESUMEN_FILAS_HTML: summaryRowsHtml,
+        DETALLE_FILAS_HTML: buildInvoiceDetailHtmlRows(sampleItem)
+    };
+}
+
+function clampAdminPendingMailPreviewCount(value) {
+    const numeric = Number.parseInt(value, 10);
+    if (!Number.isFinite(numeric)) {
+        return ADMIN_PENDING_MAIL_PREVIEW_DEFAULT_ITEMS;
+    }
+    return Math.min(ADMIN_PENDING_MAIL_PREVIEW_MAX_ITEMS, Math.max(ADMIN_PENDING_MAIL_PREVIEW_MIN_ITEMS, numeric));
+}
+
+function createAdminPendingMailPreviewItems(count = adminMailTemplatePendingPreviewCount) {
+    const safeCount = clampAdminPendingMailPreviewCount(count);
+    const items = [];
+    for (let index = 0; index < safeCount; index += 1) {
+        const correlativo = 28 + index;
+        const baseAmount = 125000 + index * 18500;
+        items.push({
+            numIngreso: `${correlativo}-2026`,
+            nombreRazonSocial: `Cliente de Prueba ${index + 1} SpA`,
+            rut: `76.123.${String(450 + index).padStart(3, '0')}-7`,
+            giro: 'Servicios Profesionales',
+            direccion: `Uno Norte 801, Oficina ${306 + index}`,
+            comuna: index % 2 === 0 ? 'Talca' : 'Curico',
+            ciudad: 'Maule',
+            contacto: `cliente${index + 1}@correo.cl`,
+            montoFacturar: String(baseAmount),
+            observacion: `Factura de prueba #${index + 1}`
+        });
+    }
+    return items;
+}
+
+function setAdminMailTemplatePendingPreviewCount(value) {
+    adminMailTemplatePendingPreviewCount = clampAdminPendingMailPreviewCount(value);
+    updateAdminMailTemplatePendingControls(adminMailTemplateActiveType);
+}
+
+function updateAdminMailTemplatePendingControls(type = adminMailTemplateActiveType) {
+    if (!ui || !ui.adminMailTemplatePendingControls) {
+        return;
+    }
+    const normalizedType = normalizeMailTemplateType(type);
+    const showControls = normalizedType === 'facturaPendingHtml';
+    ui.adminMailTemplatePendingControls.classList.toggle('hidden', !showControls);
+    if (!showControls) {
+        return;
+    }
+
+    const safeCount = clampAdminPendingMailPreviewCount(adminMailTemplatePendingPreviewCount);
+    adminMailTemplatePendingPreviewCount = safeCount;
+    if (ui.adminMailTemplatePendingCountLabel) {
+        ui.adminMailTemplatePendingCountLabel.textContent = `Vista previa: ${safeCount} factura${safeCount === 1 ? '' : 's'}`;
+    }
+    if (ui.adminMailTemplatePendingLessBtn) {
+        ui.adminMailTemplatePendingLessBtn.disabled = safeCount <= ADMIN_PENDING_MAIL_PREVIEW_MIN_ITEMS;
+    }
+    if (ui.adminMailTemplatePendingMoreBtn) {
+        ui.adminMailTemplatePendingMoreBtn.disabled = safeCount >= ADMIN_PENDING_MAIL_PREVIEW_MAX_ITEMS;
+    }
+}
+
+function buildFacturaPendingPreviewReplacements() {
+    const previewItems = createAdminPendingMailPreviewItems(adminMailTemplatePendingPreviewCount);
+    const summaryRowsHtml = `
+        <tr><td style="padding:0 0 6px;font-weight:700;color:#22365f;">Fecha</td><td style="padding:0 0 6px;">${escapeHtml(
+            new Date().toLocaleString('es-CL')
+        )}</td></tr>
+        <tr><td style="padding:0 0 6px;font-weight:700;color:#22365f;">Operador</td><td style="padding:0 0 6px;">Operador de Prueba</td></tr>
+        <tr><td style="padding:0 0 6px;font-weight:700;color:#22365f;">Sucursal</td><td style="padding:0 0 6px;">Casa Matriz</td></tr>
+        <tr><td style="padding:0 0 12px;font-weight:700;color:#22365f;">Total pendientes</td><td style="padding:0 0 12px;">${escapeHtml(
+            String(previewItems.length)
+        )}</td></tr>
+    `.trim();
+
+    const summaryTableRowsHtml = previewItems
+        .map((item, index) => {
+            return `
+                <tr>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;text-align:center;">${escapeHtml(String(index + 1))}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.numIngreso || '-')}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.nombreRazonSocial || '-')}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(formatInvoiceAmount(item.montoFacturar))}</td>
+                    <td style="padding:7px 8px;border:1px solid #d8e0ee;">${escapeHtml(item.contacto || '-')}</td>
+                </tr>
+            `.trim();
+        })
+        .join('');
+
+    const summaryTableHtml = `
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:center;">#</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">NRO INGRESO</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CLIENTE / RAZON SOCIAL</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">MONTO</th>
+                    <th style="padding:7px 8px;border:1px solid #d8e0ee;background:#eef3fb;text-align:left;">CONTACTO</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${summaryTableRowsHtml}
+            </tbody>
+        </table>
+    `.trim();
+
+    const detailHtml = previewItems
+        .map((item, index) => {
+            return `
+                <div style="margin-top:14px;">
+                    <h4 style="margin:0 0 8px;font-size:14px;color:#163463;">Factura ${escapeHtml(String(index + 1))}</h4>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                        ${buildInvoiceDetailHtmlRows(item)}
+                    </table>
+                </div>
+            `.trim();
+        })
+        .join('');
+
+    return {
+        TITULO: 'Resumen de facturas pendientes',
+        RESUMEN_FILAS_HTML: summaryRowsHtml,
+        TABLA_RESUMEN_HTML: summaryTableHtml,
+        DETALLES_FACTURAS_HTML: detailHtml
+    };
+}
+
+function buildAdminMailTemplatePreview(type, templateHtml) {
+    const normalizedType = normalizeMailTemplateType(type);
+    const sourceTemplate = normalizeMailTemplateHtmlValue(templateHtml);
+    if (!sourceTemplate) {
+        return '<html><body style="font-family:Arial,Helvetica,sans-serif;padding:12px;color:#2a3d6b;">Sin plantilla para previsualizar.</body></html>';
+    }
+
+    if (normalizedType === 'cotizacionHtml') {
+        return applyMailTemplateHtmlString(sourceTemplate, buildCotizacionPreviewReplacements());
+    }
+    if (normalizedType === 'facturaSingleHtml') {
+        return applyMailTemplateHtmlString(sourceTemplate, buildFacturaSinglePreviewReplacements());
+    }
+    return applyMailTemplateHtmlString(sourceTemplate, buildFacturaPendingPreviewReplacements());
+}
+
+function renderAdminMailTemplateHints(type = adminMailTemplateActiveType) {
+    if (!ui || !ui.adminMailTemplateHints) {
+        return;
+    }
+    const hints = getMailTemplateHints(type);
+    ui.adminMailTemplateHints.textContent = `Tokens disponibles: ${hints.join(' | ')}`;
+}
+
+function persistCurrentAdminTemplateEditorValue() {
+    if (!ui || !ui.adminMailTemplateEditor || !adminMailTemplateDrafts) {
+        return;
+    }
+    const activeType = normalizeMailTemplateType(adminMailTemplateActiveType);
+    adminMailTemplateDrafts[activeType] = normalizeMailTemplateHtmlValue(ui.adminMailTemplateEditor.value);
+}
+
+function renderAdminMailTemplateEditor(type = adminMailTemplateActiveType) {
+    if (!ui || !ui.adminMailTemplateEditor || !ui.adminMailTemplateType) {
+        return;
+    }
+    const normalizedType = normalizeMailTemplateType(type);
+    adminMailTemplateActiveType = normalizedType;
+    ui.adminMailTemplateType.value = normalizedType;
+    ui.adminMailTemplateEditor.value = normalizeMailTemplateHtmlValue(adminMailTemplateDrafts?.[normalizedType]);
+    renderAdminMailTemplateHints(normalizedType);
+    updateAdminMailTemplatePendingControls(normalizedType);
+}
+
+function renderAdminMailTemplatePreview(type = adminMailTemplateActiveType) {
+    if (!ui || !ui.adminMailTemplatePreviewFrame) {
+        return;
+    }
+    const normalizedType = normalizeMailTemplateType(type);
+    updateAdminMailTemplatePendingControls(normalizedType);
+    const templateHtml = normalizeMailTemplateHtmlValue(adminMailTemplateDrafts?.[normalizedType]);
+    ui.adminMailTemplatePreviewFrame.srcdoc = buildAdminMailTemplatePreview(normalizedType, templateHtml);
+}
+
+function applyAdminMailTemplatesResult(result) {
+    const templates = normalizeMailTemplatesObject(result?.templates);
+    adminMailTemplatesLoaded = result || null;
+    adminMailTemplateDrafts = { ...templates };
+    runtimeMailTemplates = { ...templates };
+
+    if (!ui) {
+        return;
+    }
+
+    const sourceUpdatedAt = normalizeInvoiceText(result?.updatedAt, 80);
+    const parsedUpdatedAt = sourceUpdatedAt ? new Date(sourceUpdatedAt) : null;
+    const updatedAtLabel =
+        parsedUpdatedAt && !Number.isNaN(parsedUpdatedAt.getTime())
+            ? parsedUpdatedAt.toLocaleString('es-CL')
+            : sourceUpdatedAt;
+    const updatedBy = normalizeInvoiceText(result?.updatedBy, 120);
+    const details = [];
+    if (updatedAtLabel) {
+        details.push(`Actualizado: ${updatedAtLabel}`);
+    }
+    if (updatedBy) {
+        details.push(`Por: ${updatedBy}`);
+    }
+    if (ui.adminMailTemplateSource) {
+        ui.adminMailTemplateSource.textContent = details.join(' | ');
+    }
+
+    adminMailTemplateActiveType = normalizeMailTemplateType(ui.adminMailTemplateType?.value || adminMailTemplateActiveType);
+    renderAdminMailTemplateEditor(adminMailTemplateActiveType);
+    renderAdminMailTemplatePreview(adminMailTemplateActiveType);
+}
+
+async function loadRuntimeMailTemplates(options = {}) {
+    try {
+        const result = await apiRequest('/mail-templates');
+        runtimeMailTemplates = normalizeMailTemplatesObject(result?.templates);
+        return runtimeMailTemplates;
+    } catch (error) {
+        runtimeMailTemplates = null;
+        if (options.showErrors && ui?.adminMailTemplateMessage) {
+            setFormMessage(ui.adminMailTemplateMessage, error.message, 'error');
+        }
+        return null;
+    }
+}
+
+async function loadAdminMailTemplates() {
+    if (!isSuperUser(currentUser) || !ui) {
+        return;
+    }
+
+    try {
+        const result = await apiRequest('/admin/correo-plantillas');
+        applyAdminMailTemplatesResult(result);
+        setFormMessage(ui.adminMailTemplateMessage, '', '');
+    } catch (error) {
+        setFormMessage(ui.adminMailTemplateMessage, error.message, 'error');
+    }
+}
+
+async function handleAdminMailTemplatesSave() {
+    if (!isSuperUser(currentUser) || !ui) {
+        setFormMessage(ui.adminMailTemplateMessage, 'Solo el superusuario puede editar plantillas de correo.', 'error');
+        return;
+    }
+
+    persistCurrentAdminTemplateEditorValue();
+    const payload = {
+        templates: normalizeMailTemplatesObject(adminMailTemplateDrafts)
+    };
+
+    try {
+        const result = await apiRequest('/admin/correo-plantillas', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        applyAdminMailTemplatesResult(result);
+        setFormMessage(ui.adminMailTemplateMessage, result.message || 'Plantillas guardadas correctamente.', 'success');
+    } catch (error) {
+        setFormMessage(ui.adminMailTemplateMessage, error.message, 'error');
+    }
+}
+
+function clearAdminMailTemplatesState() {
+    adminMailTemplatesLoaded = null;
+    adminMailTemplateDrafts = null;
+    adminMailTemplateActiveType = 'cotizacionHtml';
+    adminMailTemplatePendingPreviewCount = ADMIN_PENDING_MAIL_PREVIEW_DEFAULT_ITEMS;
+    if (!ui) {
+        return;
+    }
+    if (ui.adminMailTemplateType) {
+        ui.adminMailTemplateType.value = 'cotizacionHtml';
+    }
+    if (ui.adminMailTemplateEditor) {
+        ui.adminMailTemplateEditor.value = '';
+    }
+    if (ui.adminMailTemplateHints) {
+        ui.adminMailTemplateHints.textContent = '';
+    }
+    if (ui.adminMailTemplateSource) {
+        ui.adminMailTemplateSource.textContent = '';
+    }
+    if (ui.adminMailTemplatePreviewFrame) {
+        ui.adminMailTemplatePreviewFrame.srcdoc = '';
+    }
+    updateAdminMailTemplatePendingControls('cotizacionHtml');
+    setFormMessage(ui.adminMailTemplateMessage, '', '');
 }
 
 function clearAdminUsageStatsState() {
@@ -6505,19 +7164,90 @@ async function handleBranchDelete(sucursal) {
 }
 
 function initializeDocumentOptions() {
-    defaultDocumentOptions = getDefaultDocumentOptionsFromDom();
-    configuredDocumentOptions = loadDocumentOptions(defaultDocumentOptions);
+    defaultDocumentGroups = getDefaultDocumentGroupsFromDom();
+    defaultDocumentOptions = getDefaultDocumentOptionsFromDom(defaultDocumentGroups);
+    configuredDocumentGroups = loadDocumentGroups(defaultDocumentGroups);
+    configuredDocumentOptions = loadDocumentOptions(defaultDocumentOptions, configuredDocumentGroups);
+    renderAdminDocumentGroupTitleInputs(configuredDocumentGroups);
+    renderAdminDocumentGroupSelect(configuredDocumentGroups);
     renderDocumentOptions(configuredDocumentOptions);
     renderAdminDocuments(configuredDocumentOptions);
 }
 
-function getDefaultDocumentOptionsFromDom() {
+function buildDefaultDocumentGroups() {
+    return DOCUMENT_GROUP_IDS.map((groupId, index) => ({
+        id: groupId,
+        label: DEFAULT_DOCUMENT_GROUP_TITLES[index] || `Seccion ${index + 1}`
+    }));
+}
+
+function normalizeDocumentGroupId(value) {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return DOCUMENT_GROUP_IDS.includes(normalized) ? normalized : '';
+}
+
+function normalizeDocumentGroupLabel(value) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80);
+}
+
+function sanitizeDocumentGroups(groups, fallbackGroups = null) {
+    const fallbackMap = new Map();
+    const fallbackSource = Array.isArray(fallbackGroups) && fallbackGroups.length > 0 ? fallbackGroups : buildDefaultDocumentGroups();
+    fallbackSource.forEach((item, index) => {
+        const defaultId = DOCUMENT_GROUP_IDS[index];
+        const id = normalizeDocumentGroupId(item?.id) || defaultId;
+        const label = normalizeDocumentGroupLabel(item?.label) || DEFAULT_DOCUMENT_GROUP_TITLES[index] || `Seccion ${index + 1}`;
+        if (id && !fallbackMap.has(id)) {
+            fallbackMap.set(id, label);
+        }
+    });
+
+    const sourceMap = new Map();
+    (Array.isArray(groups) ? groups : []).forEach((item) => {
+        const id = normalizeDocumentGroupId(item?.id);
+        const label = normalizeDocumentGroupLabel(item?.label);
+        if (id && label) {
+            sourceMap.set(id, label);
+        }
+    });
+
+    return DOCUMENT_GROUP_IDS.map((groupId, index) => ({
+        id: groupId,
+        label: sourceMap.get(groupId) || fallbackMap.get(groupId) || DEFAULT_DOCUMENT_GROUP_TITLES[index] || `Seccion ${index + 1}`
+    }));
+}
+
+function cloneDocumentGroups(groups) {
+    return sanitizeDocumentGroups(groups).map((item) => ({ ...item }));
+}
+
+function getDefaultDocumentGroupsFromDom() {
+    if (!ui || !ui.documentosContainer) {
+        return buildDefaultDocumentGroups();
+    }
+
+    const groupsFromDom = Array.from(ui.documentosContainer.querySelectorAll('[data-doc-group-id]')).map((groupNode) => ({
+        id: normalizeDocumentGroupId(groupNode?.dataset?.docGroupId),
+        label: normalizeDocumentGroupLabel(groupNode?.dataset?.docGroupTitle || groupNode.querySelector('.docs-group-title')?.textContent)
+    }));
+
+    return sanitizeDocumentGroups(groupsFromDom, buildDefaultDocumentGroups());
+}
+
+function getDefaultDocumentOptionsFromDom(groups = defaultDocumentGroups) {
     if (!ui || !ui.documentosContainer) {
         return [];
     }
 
     const options = [];
-    const seenValues = new Set();
     ui.documentosContainer.querySelectorAll('label.doc-item').forEach((labelNode) => {
         const inputNode = labelNode.querySelector('input[name="documentos"]');
         if (!inputNode) {
@@ -6526,15 +7256,20 @@ function getDefaultDocumentOptionsFromDom() {
 
         const value = normalizeDocumentOptionValue(inputNode.value);
         const label = normalizeDocumentOptionLabel(labelNode.textContent);
-        if (!value || !label || seenValues.has(value)) {
+        if (!value || !label) {
             return;
         }
 
-        seenValues.add(value);
-        options.push({ value, label });
+        const groupIdFromNode = normalizeDocumentGroupId(
+            inputNode?.dataset?.docGroupId ||
+                labelNode?.dataset?.docGroupId ||
+                labelNode.closest('[data-doc-group-id]')?.dataset?.docGroupId
+        );
+
+        options.push({ value, label, groupId: groupIdFromNode });
     });
 
-    return options;
+    return sanitizeDocumentOptions(options, [], groups);
 }
 
 function normalizeDocumentOptionLabel(value) {
@@ -6563,9 +7298,21 @@ function buildDocumentOptionValue(label) {
     return value || 'documento';
 }
 
-function sanitizeDocumentOptions(options) {
+function sanitizeDocumentOptions(options, fallbackOptions = [], groups = configuredDocumentGroups) {
+    const safeGroups = cloneDocumentGroups(groups);
+    const validGroupIds = new Set(safeGroups.map((item) => item.id));
+    const fallbackGroupMap = new Map();
+    (Array.isArray(fallbackOptions) ? fallbackOptions : []).forEach((item) => {
+        const value = normalizeDocumentOptionValue(item?.value);
+        const groupId = normalizeDocumentGroupId(item?.groupId);
+        if (value && groupId && validGroupIds.has(groupId) && !fallbackGroupMap.has(value)) {
+            fallbackGroupMap.set(value, groupId);
+        }
+    });
+
     const sanitized = [];
     const seenValues = new Set();
+    let autoGroupIndex = 0;
     (Array.isArray(options) ? options : []).forEach((item) => {
         const value = normalizeDocumentOptionValue(item?.value);
         const label = normalizeDocumentOptionLabel(item?.label);
@@ -6573,18 +7320,33 @@ function sanitizeDocumentOptions(options) {
             return;
         }
 
+        let groupId = normalizeDocumentGroupId(item?.groupId);
+        if (!validGroupIds.has(groupId)) {
+            groupId = '';
+        }
+        if (!groupId) {
+            const fallbackGroupId = fallbackGroupMap.get(value);
+            if (fallbackGroupId && validGroupIds.has(fallbackGroupId)) {
+                groupId = fallbackGroupId;
+            }
+        }
+        if (!groupId) {
+            groupId = safeGroups[autoGroupIndex % safeGroups.length]?.id || DOCUMENT_GROUP_IDS[0];
+            autoGroupIndex += 1;
+        }
+
         seenValues.add(value);
-        sanitized.push({ value, label });
+        sanitized.push({ value, label, groupId });
     });
     return sanitized;
 }
 
-function cloneDocumentOptions(options) {
-    return sanitizeDocumentOptions(options).map((item) => ({ ...item }));
+function cloneDocumentOptions(options, groups = configuredDocumentGroups) {
+    return sanitizeDocumentOptions(options, [], groups).map((item) => ({ ...item }));
 }
 
-function loadDocumentOptions(fallbackOptions) {
-    const fallback = cloneDocumentOptions(fallbackOptions);
+function loadDocumentGroups(fallbackGroups) {
+    const fallback = cloneDocumentGroups(fallbackGroups);
 
     try {
         const raw = window.localStorage.getItem(DOCUMENT_OPTIONS_STORAGE);
@@ -6593,7 +7355,28 @@ function loadDocumentOptions(fallbackOptions) {
         }
 
         const parsed = JSON.parse(raw);
-        const sanitized = sanitizeDocumentOptions(parsed);
+        if (Array.isArray(parsed)) {
+            return fallback;
+        }
+        return sanitizeDocumentGroups(parsed?.groups, fallback);
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function loadDocumentOptions(fallbackOptions, groups = configuredDocumentGroups) {
+    const safeGroups = cloneDocumentGroups(groups);
+    const fallback = sanitizeDocumentOptions(fallbackOptions, fallbackOptions, safeGroups);
+
+    try {
+        const raw = window.localStorage.getItem(DOCUMENT_OPTIONS_STORAGE);
+        if (!raw) {
+            return fallback;
+        }
+
+        const parsed = JSON.parse(raw);
+        const sourceOptions = !Array.isArray(parsed) && parsed && Array.isArray(parsed.options) ? parsed.options : parsed;
+        const sanitized = sanitizeDocumentOptions(sourceOptions, fallback, safeGroups);
         return sanitized.length > 0 ? sanitized : fallback;
     } catch (error) {
         return fallback;
@@ -6602,7 +7385,12 @@ function loadDocumentOptions(fallbackOptions) {
 
 function persistDocumentOptions(options) {
     try {
-        window.localStorage.setItem(DOCUMENT_OPTIONS_STORAGE, JSON.stringify(cloneDocumentOptions(options)));
+        const payload = {
+            version: DOCUMENT_OPTIONS_STORAGE_VERSION,
+            groups: cloneDocumentGroups(configuredDocumentGroups),
+            options: cloneDocumentOptions(options, configuredDocumentGroups)
+        };
+        window.localStorage.setItem(DOCUMENT_OPTIONS_STORAGE, JSON.stringify(payload));
     } catch (error) {
         // Si localStorage no esta disponible, se mantiene solo en memoria.
     }
@@ -6623,12 +7411,14 @@ function renderDocumentOptions(options, selectedValues = null) {
         return;
     }
 
+    const safeGroups = cloneDocumentGroups(configuredDocumentGroups.length > 0 ? configuredDocumentGroups : defaultDocumentGroups);
+    const safeOptions = sanitizeDocumentOptions(options, defaultDocumentOptions, safeGroups);
     const selectedSet = new Set(
         Array.isArray(selectedValues) ? selectedValues.map((value) => String(value || '').trim()) : getCurrentCheckedDocumentValues()
     );
     ui.documentosContainer.innerHTML = '';
 
-    if (!Array.isArray(options) || options.length === 0) {
+    if (!Array.isArray(safeOptions) || safeOptions.length === 0) {
         const emptyNode = document.createElement('p');
         emptyNode.className = 'docs-empty-message';
         emptyNode.textContent = 'Sin documentos configurados.';
@@ -6636,19 +7426,49 @@ function renderDocumentOptions(options, selectedValues = null) {
         return;
     }
 
-    options.forEach((option) => {
-        const itemLabel = document.createElement('label');
-        itemLabel.className = 'doc-item';
+    safeGroups.forEach((group) => {
+        const groupSection = document.createElement('section');
+        groupSection.className = 'docs-group';
+        groupSection.dataset.docGroupId = group.id;
+        groupSection.dataset.docGroupTitle = group.label;
 
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.name = 'documentos';
-        checkbox.value = option.value;
-        checkbox.checked = selectedSet.has(option.value);
+        const titleNode = document.createElement('h5');
+        titleNode.className = 'docs-group-title';
+        titleNode.textContent = group.label;
+        groupSection.appendChild(titleNode);
 
-        itemLabel.appendChild(checkbox);
-        itemLabel.appendChild(document.createTextNode(` ${option.label}`));
-        ui.documentosContainer.appendChild(itemLabel);
+        const gridNode = document.createElement('div');
+        gridNode.className = 'docs-grid';
+
+        const groupOptions = safeOptions.filter((option) => normalizeDocumentGroupId(option?.groupId) === group.id);
+        if (groupOptions.length === 0) {
+            const groupEmptyNode = document.createElement('p');
+            groupEmptyNode.className = 'docs-group-empty';
+            groupEmptyNode.textContent = 'Sin documentos en esta seccion.';
+            groupSection.appendChild(groupEmptyNode);
+            ui.documentosContainer.appendChild(groupSection);
+            return;
+        }
+
+        groupOptions.forEach((option) => {
+            const itemLabel = document.createElement('label');
+            itemLabel.className = 'doc-item';
+            itemLabel.dataset.docGroupId = group.id;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'documentos';
+            checkbox.value = option.value;
+            checkbox.checked = selectedSet.has(option.value);
+            checkbox.dataset.docGroupId = group.id;
+
+            itemLabel.appendChild(checkbox);
+            itemLabel.appendChild(document.createTextNode(` ${option.label}`));
+            gridNode.appendChild(itemLabel);
+        });
+
+        groupSection.appendChild(gridNode);
+        ui.documentosContainer.appendChild(groupSection);
     });
 }
 
@@ -6657,17 +7477,19 @@ function renderAdminDocuments(options) {
         return;
     }
 
+    const safeOptions = sanitizeDocumentOptions(options, defaultDocumentOptions, configuredDocumentGroups);
     ui.adminDocumentsBody.innerHTML = '';
-    if (!Array.isArray(options) || options.length === 0) {
-        ui.adminDocumentsBody.innerHTML = '<tr><td colspan="3">Sin documentos para mostrar.</td></tr>';
+    if (!Array.isArray(safeOptions) || safeOptions.length === 0) {
+        ui.adminDocumentsBody.innerHTML = '<tr><td colspan="4">Sin documentos para mostrar.</td></tr>';
         return;
     }
 
-    options.forEach((option) => {
+    safeOptions.forEach((option) => {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${escapeHtml(option.label)}</td>
             <td><span class="admin-doc-id">${escapeHtml(option.value)}</span></td>
+            <td>${escapeHtml(getDocumentGroupLabelById(option.groupId))}</td>
             <td></td>
         `;
 
@@ -6690,12 +7512,101 @@ function renderAdminDocuments(options) {
     });
 }
 
+function getDocumentGroupLabelById(groupId) {
+    const normalizedGroupId = normalizeDocumentGroupId(groupId);
+    if (!normalizedGroupId) {
+        return 'Seccion';
+    }
+
+    const match = cloneDocumentGroups(configuredDocumentGroups).find((item) => item.id === normalizedGroupId);
+    return normalizeDocumentGroupLabel(match?.label || '').trim() || 'Seccion';
+}
+
+function renderAdminDocumentGroupSelect(groups, selectedGroupId = '') {
+    if (!ui?.adminDocumentGroup) {
+        return;
+    }
+
+    const safeGroups = cloneDocumentGroups(groups);
+    const selected = normalizeDocumentGroupId(selectedGroupId);
+    const selectedIsValid = safeGroups.some((group) => group.id === selected);
+    const fallbackGroupId = safeGroups[0]?.id || DOCUMENT_GROUP_IDS[0];
+
+    ui.adminDocumentGroup.innerHTML = '';
+    safeGroups.forEach((group) => {
+        const optionNode = document.createElement('option');
+        optionNode.value = group.id;
+        optionNode.textContent = group.label;
+        ui.adminDocumentGroup.appendChild(optionNode);
+    });
+    ui.adminDocumentGroup.value = selectedIsValid ? selected : fallbackGroupId;
+}
+
+function renderAdminDocumentGroupTitleInputs(groups) {
+    if (!ui?.adminDocumentGroupTitles) {
+        return;
+    }
+
+    const safeGroups = cloneDocumentGroups(groups);
+    ui.adminDocumentGroupTitles.innerHTML = '';
+
+    safeGroups.forEach((group, index) => {
+        const fieldWrap = document.createElement('label');
+        fieldWrap.className = 'admin-doc-group-item';
+
+        const titleNode = document.createElement('span');
+        titleNode.textContent = `Seccion ${index + 1}`;
+        fieldWrap.appendChild(titleNode);
+
+        const inputNode = document.createElement('input');
+        inputNode.type = 'text';
+        inputNode.maxLength = 80;
+        inputNode.value = group.label;
+        inputNode.dataset.docGroupId = group.id;
+        fieldWrap.appendChild(inputNode);
+
+        ui.adminDocumentGroupTitles.appendChild(fieldWrap);
+    });
+}
+
+function readDocumentGroupsFromInputs(fallbackGroups) {
+    const fallback = cloneDocumentGroups(fallbackGroups);
+    if (!ui?.adminDocumentGroupTitles) {
+        return fallback;
+    }
+
+    const parsed = fallback.map((group) => {
+        const inputNode = ui.adminDocumentGroupTitles.querySelector(`input[data-doc-group-id="${group.id}"]`);
+        const label = normalizeDocumentGroupLabel(inputNode?.value) || group.label;
+        return { id: group.id, label };
+    });
+    return sanitizeDocumentGroups(parsed, fallback);
+}
+
+function handleAdminDocumentGroupTitlesSave() {
+    if (!canManageAdminCatalogs(currentUser)) {
+        setFormMessage(ui.adminDocumentMessage, 'Solo ADMIN o SUPER pueden editar secciones de documentos.', 'error');
+        return;
+    }
+
+    const updatedGroups = readDocumentGroupsFromInputs(configuredDocumentGroups.length > 0 ? configuredDocumentGroups : defaultDocumentGroups);
+    configuredDocumentGroups = updatedGroups;
+    configuredDocumentOptions = sanitizeDocumentOptions(configuredDocumentOptions, defaultDocumentOptions, configuredDocumentGroups);
+    persistDocumentOptions(configuredDocumentOptions);
+    renderAdminDocumentGroupTitleInputs(configuredDocumentGroups);
+    renderAdminDocumentGroupSelect(configuredDocumentGroups, ui?.adminDocumentGroup?.value);
+    renderDocumentOptions(configuredDocumentOptions);
+    renderAdminDocuments(configuredDocumentOptions);
+    setFormMessage(ui.adminDocumentMessage, 'Titulos de secciones actualizados correctamente.', 'success');
+}
+
 function resetDocumentInputs() {
     if (!ui || !ui.adminDocumentLabel) {
         return;
     }
 
     ui.adminDocumentLabel.value = '';
+    renderAdminDocumentGroupSelect(configuredDocumentGroups);
 }
 
 function enterDocumentEditMode(option) {
@@ -6705,6 +7616,8 @@ function enterDocumentEditMode(option) {
 
     editingDocumentValue = option.value;
     ui.adminDocumentLabel.value = option.label;
+    const selectedGroupId = normalizeDocumentGroupId(option?.groupId) || configuredDocumentGroups[0]?.id || DOCUMENT_GROUP_IDS[0];
+    renderAdminDocumentGroupSelect(configuredDocumentGroups, selectedGroupId);
     ui.adminDocumentSaveBtn.textContent = 'GUARDAR DOCUMENTO';
     ui.adminDocumentCancelBtn.classList.remove('hidden');
     setFormMessage(ui.adminDocumentMessage, `Editando documento ${option.label}.`, 'success');
@@ -6744,7 +7657,14 @@ function handleAdminDocumentSave() {
         return;
     }
 
-    const options = cloneDocumentOptions(configuredDocumentOptions);
+    const selectedGroupId = normalizeDocumentGroupId(ui?.adminDocumentGroup?.value);
+    const validGroupIds = new Set(cloneDocumentGroups(configuredDocumentGroups).map((item) => item.id));
+    if (!selectedGroupId || !validGroupIds.has(selectedGroupId)) {
+        setFormMessage(ui.adminDocumentMessage, 'Selecciona una seccion valida para el documento.', 'error');
+        return;
+    }
+
+    const options = cloneDocumentOptions(configuredDocumentOptions, configuredDocumentGroups);
     if (editingDocumentValue) {
         const targetIndex = options.findIndex((item) => item.value === editingDocumentValue);
         if (targetIndex === -1) {
@@ -6754,6 +7674,7 @@ function handleAdminDocumentSave() {
         }
 
         options[targetIndex].label = label;
+        options[targetIndex].groupId = selectedGroupId;
         configuredDocumentOptions = options;
         persistDocumentOptions(configuredDocumentOptions);
         renderDocumentOptions(configuredDocumentOptions);
@@ -6778,7 +7699,7 @@ function handleAdminDocumentSave() {
         generatedValue = `${generatedValue}_${suffix}`;
     }
 
-    options.push({ value: generatedValue, label });
+    options.push({ value: generatedValue, label, groupId: selectedGroupId });
     configuredDocumentOptions = options;
     persistDocumentOptions(configuredDocumentOptions);
     renderDocumentOptions(configuredDocumentOptions);
@@ -6798,7 +7719,9 @@ function handleAdminDocumentDelete(option) {
         return;
     }
 
-    configuredDocumentOptions = cloneDocumentOptions(configuredDocumentOptions).filter((item) => item.value !== option.value);
+    configuredDocumentOptions = cloneDocumentOptions(configuredDocumentOptions, configuredDocumentGroups).filter(
+        (item) => item.value !== option.value
+    );
     persistDocumentOptions(configuredDocumentOptions);
     renderDocumentOptions(configuredDocumentOptions);
     renderAdminDocuments(configuredDocumentOptions);

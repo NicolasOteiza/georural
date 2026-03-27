@@ -69,6 +69,8 @@ const SMTP_PASSWORD = String(process.env.SMTP_PASSWORD || '');
 const SMTP_SECURE = parseBooleanFlag(process.env.SMTP_SECURE, false);
 const SMTP_FROM_EMAIL = normalizeText(process.env.SMTP_FROM_EMAIL || SMTP_USER).toLowerCase();
 const SMTP_FROM_NAME = normalizeText(process.env.SMTP_FROM_NAME || 'Geo Rural');
+const MAIL_TEMPLATE_MAX_LENGTH = parsePositiveInt(process.env.MAIL_TEMPLATE_MAX_LENGTH, 400000);
+const MAIL_TEMPLATE_KEYS = Object.freeze(['cotizacionHtml', 'facturaSingleHtml', 'facturaPendingHtml']);
 const SMTP_CONFIG_SINGLETON_ID = 1;
 const SMTP_ENV_CONFIG = Object.freeze({
     host: SMTP_HOST,
@@ -1633,6 +1635,40 @@ function formatMonthlyPeriodLabel(anio, mes) {
     return `${(MONTH_NAMES_ES[validMonth - 1] || 'mes').toUpperCase()} ${validYear}`;
 }
 
+function normalizeCotizacionParcelamientoKey(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+}
+
+function buildCotizacionParcelamientoRows(utmValue) {
+    const parsedUtm = Number(utmValue);
+    if (!Number.isFinite(parsedUtm) || parsedUtm <= 0) {
+        return [];
+    }
+
+    return COTIZACION_TEMPLATE_ROWS.map((row) => {
+        const lotes = normalizeText(row?.lotes);
+        const valorUtm = Number(row?.valorUtm);
+        if (!lotes || !Number.isFinite(valorUtm) || valorUtm <= 0) {
+            return null;
+        }
+
+        const neto = Math.round(valorUtm * parsedUtm);
+        const iva = Math.round(neto * 0.19);
+        const total = neto + iva;
+        return {
+            key: normalizeCotizacionParcelamientoKey(lotes),
+            lotes,
+            valorUtm,
+            neto,
+            iva,
+            total
+        };
+    }).filter(Boolean);
+}
+
 function buildCotizacionAttachmentFileName(summary) {
     const year = Number(summary?.periodo?.anio);
     const month = Number(summary?.periodo?.mes);
@@ -1646,6 +1682,28 @@ function getCotizacionTemplateFileAbsolutePath() {
         .replace(/\\/g, '/')
         .replace(/^\/+/, '');
     return path.resolve(process.cwd(), normalized);
+}
+
+function resolveCotizacionEmailLogoAttachment() {
+    const logoCandidates = [
+        path.resolve(process.cwd(), 'logo.png'),
+        path.resolve(process.cwd(), 'logo.jpg'),
+        path.resolve(process.cwd(), 'logo.jpeg'),
+        path.resolve(process.cwd(), 'assets', 'logo.png'),
+        path.resolve(process.cwd(), 'assets', 'logo.jpg'),
+        path.resolve(process.cwd(), 'assets', 'logo.jpeg')
+    ];
+
+    const logoPath = logoCandidates.find((candidatePath) => fs.existsSync(candidatePath));
+    if (!logoPath) {
+        return null;
+    }
+
+    return {
+        filename: path.basename(logoPath),
+        path: logoPath,
+        cid: 'geo-rural-cotizacion-logo'
+    };
 }
 
 function isPdfBuffer(buffer) {
@@ -1880,7 +1938,99 @@ async function buildCotizacionTemplatePdfBuffer(summary) {
     return Buffer.from(bytes);
 }
 
-function buildCotizacionEmailText(summary, clientName, referenciaCliente, authUser) {
+function buildCotizacionParcelamientoTableLines(parcelamientoRows = []) {
+    const rows = Array.isArray(parcelamientoRows) ? parcelamientoRows : [];
+    const lines = ['TRAMO LOTES | VALOR UTM | NETO CLP | IVA CLP | TOTAL CLP'];
+    rows.forEach((row) => {
+        lines.push(
+            `${row.lotes} | ${formatTemplateUtmUnits(row.valorUtm)} | ${formatCurrencyClp(row.neto)} | ${formatCurrencyClp(
+                row.iva
+            )} | ${formatCurrencyClp(row.total)}`
+        );
+    });
+    return lines;
+}
+
+function escapeHtmlForEmail(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function buildCotizacionParcelamientoTableHtml(parcelamientoRows = [], selectedParcelamiento = null) {
+    const rows = Array.isArray(parcelamientoRows) ? parcelamientoRows : [];
+    const selectedKey = selectedParcelamiento ? normalizeCotizacionParcelamientoKey(selectedParcelamiento.key || selectedParcelamiento.lotes) : '';
+    const bodyRows = rows
+        .map((row) => {
+            const rowKey = normalizeCotizacionParcelamientoKey(row.key || row.lotes);
+            const isSelected = selectedKey && rowKey === selectedKey;
+            const rowStyle = isSelected ? 'background:#e8f5ff;font-weight:700;color:#1f74bf;' : '';
+            return `<tr style="${rowStyle}"><td style="border:1px solid #d9deea;padding:6px 8px;">${escapeHtmlForEmail(
+                row.lotes
+            )}</td><td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">${escapeHtmlForEmail(
+                formatTemplateUtmUnits(row.valorUtm)
+            )}</td><td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">${escapeHtmlForEmail(
+                formatCurrencyClp(row.neto)
+            )}</td><td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">${escapeHtmlForEmail(
+                formatCurrencyClp(row.iva)
+            )}</td><td style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">${escapeHtmlForEmail(
+                formatCurrencyClp(row.total)
+            )}</td></tr>`;
+        })
+        .join('');
+
+    return `<table role="presentation" cellspacing="0" cellpadding="0" style="width:92%;max-width:680px;margin:0 auto;border-collapse:collapse;font-size:12px;color:#2d84d2;">
+        <thead>
+            <tr style="background:#e6f4ff;color:#1f74bf;">
+                <th style="border:1px solid #d9deea;padding:6px 8px;text-align:left;">Tramo lotes</th>
+                <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Valor UTM</th>
+                <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Neto CLP</th>
+                <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">IVA CLP</th>
+                <th style="border:1px solid #d9deea;padding:6px 8px;text-align:right;">Total CLP</th>
+            </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+    </table>`;
+}
+
+function buildCotizacionPostTableParagraphs(periodLabel) {
+    const safePeriod = normalizeText(periodLabel) || 'periodo vigente';
+    return [
+        '2).- Alcance general de los valores informados:',
+        'Los valores del cuadro son referenciales, estan expresados en pesos chilenos e incluyen IVA (19%).',
+        `Corresponden al periodo ${safePeriod} y pueden variar si cambia el valor oficial de la UTM.`,
+        '',
+        '3).- Consideraciones para la evaluacion:',
+        'El monto definitivo de verificacion se determina con los antecedentes tecnicos del proyecto y el tramo final de lotes.',
+        'Si el proyecto cambia de tramo durante la revision, se aplicara el valor del tramo correspondiente.',
+        '',
+        '4).- Vigencia y contacto:',
+        'La presente cotizacion tiene vigencia durante el mes calendario indicado.',
+        'Para continuar con su proceso o resolver dudas, puede responder este correo o contactar su sucursal Geo Rural.'
+    ];
+}
+
+function buildCotizacionFormalSignatureLines() {
+    return [
+        'Saludos cordiales,',
+        '',
+        '',
+        '',
+        '',
+        'Pedro Antonio Gerardo Herrera Mendez',
+        '',
+        'Pedro Ignacio Albornoz Sateler',
+        '',
+        'GEO RURAL VERIFICACIONES LIMITADA',
+        '',
+        'Uno Norte N° 801, oficina 306, Talca'
+    ];
+}
+
+function buildCotizacionEmailText(summary, clientName, referenciaCliente, authUser, options = {}) {
     const nowText = new Date().toLocaleString('es-CL', {
         year: 'numeric',
         month: '2-digit',
@@ -1895,28 +2045,326 @@ function buildCotizacionEmailText(summary, clientName, referenciaCliente, authUs
     const branch = normalizeText(authUser?.sucursal || 'Sin sucursal');
     const clientNameText = normalizeText(clientName);
     const referenciaText = normalizeText(referenciaCliente);
+    const parcelamientoRows =
+        Array.isArray(options?.parcelamientoRows) && options.parcelamientoRows.length > 0
+            ? options.parcelamientoRows
+            : buildCotizacionParcelamientoRows(summary?.utm?.valor);
+    const selectedParcelamiento = options?.selectedParcelamiento || null;
+    const tableLeadText = selectedParcelamiento
+        ? `Adicionalmente, presentamos el siguiente cuadro para el tramo consultado (${selectedParcelamiento.lotes} lotes) en el periodo ${periodLabel}:`
+        : `Adicionalmente, presentamos el siguiente cuadro de valores para el periodo ${periodLabel}:`;
     const lines = [
-        clientNameText ? `Estimado/a ${clientNameText},` : 'Estimado/a cliente,',
+        clientNameText ? `Estimada/o ${clientNameText}:` : 'Estimada/o cliente:',
         '',
-        'Adjuntamos cotizacion actualizada de Geo Rural.',
+        'Junto con saludar, tenemos el agrado de dirigirnos a Ud. a fin de dar respuesta a su consulta.',
         `Fecha: ${nowText}`,
         `Periodo UTM: ${periodLabel}`,
         `UTM vigente: ${formatCurrencyClp(summary?.utm?.valor)}`,
-        '',
-        `Total estandar: ${formatUtmUnits(summary?.totalUtm)}`,
-        `Equivalencia referencial en CLP: ${formatCurrencyClp(summary?.totalPesos)}`,
-        '',
-        `Atendido por: ${userName}`,
-        `Sucursal: ${branch}`,
-        '',
-        'Estimado cliente: este mensaje es solo referencial y valido dentro del mes en curso. NO RESPONDER. Para consultas, dirijase a una sucursal.'
+        ''
     ];
 
     if (referenciaText) {
-        lines.splice(6, 0, `Detalle cliente: ${referenciaText}`);
+        lines.push(`Referencia cliente: ${referenciaText}`);
+        lines.push('');
     }
 
+    if (selectedParcelamiento) {
+        lines.push('1).- Cotizacion por los servicios de verificacion:');
+        lines.push(
+            `En atencion a su consulta para el tramo de ${selectedParcelamiento.lotes} lotes, el valor referencial con IVA es ${formatCurrencyClp(
+                selectedParcelamiento.total
+            )}.`
+        );
+        lines.push('');
+    }
+
+    lines.push(
+        tableLeadText,
+        ...buildCotizacionParcelamientoTableLines(parcelamientoRows),
+        '',
+        ...buildCotizacionPostTableParagraphs(periodLabel),
+        '',
+        'Para mas informacion, se adjunta la carta de cotizacion en formato PDF con el detalle completo y la tabla actualizada al periodo correspondiente.',
+        '',
+        `Atendido por: ${userName} | Sucursal: ${branch}`,
+        '',
+        ...buildCotizacionFormalSignatureLines()
+    );
+
     return lines.join('\n');
+}
+
+function buildCotizacionEmailHtml(summary, clientName, referenciaCliente, authUser, options = {}) {
+    const nowText = new Date().toLocaleString('es-CL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    const periodLabel = formatMonthlyPeriodLabel(summary?.periodo?.anio, summary?.periodo?.mes);
+    const userName = normalizeText(authUser?.nombre || authUser?.username || 'Secretaria');
+    const branch = normalizeText(authUser?.sucursal || 'Sin sucursal');
+    const clientNameText = normalizeText(clientName);
+    const referenciaText = normalizeText(referenciaCliente);
+    const parcelamientoRows =
+        Array.isArray(options?.parcelamientoRows) && options.parcelamientoRows.length > 0
+            ? options.parcelamientoRows
+            : buildCotizacionParcelamientoRows(summary?.utm?.valor);
+    const selectedParcelamiento = options?.selectedParcelamiento || null;
+    const greeting = clientNameText ? `Estimada/o ${escapeHtmlForEmail(clientNameText)}:` : 'Estimada/o cliente:';
+    const selectedBlock = selectedParcelamiento
+        ? `<p style="margin:0 0 10px 0;"><strong>1).- Cotizacion por los servicios de verificacion:</strong></p>
+           <p style="margin:0 0 14px 0;">En atencion a su consulta para el tramo de <strong>${escapeHtmlForEmail(
+               selectedParcelamiento.lotes
+           )} lotes</strong>, el valor referencial con IVA es <strong>${escapeHtmlForEmail(
+               formatCurrencyClp(selectedParcelamiento.total)
+           )}</strong>.</p>`
+        : '';
+    const referenceBlock = referenciaText
+        ? `<p style="margin:0 0 12px 0;"><strong>Referencia cliente:</strong> ${escapeHtmlForEmail(referenciaText)}</p>`
+        : '';
+    const tableLeadText = selectedParcelamiento
+        ? `Adicionalmente, presentamos el siguiente cuadro para el tramo consultado (${escapeHtmlForEmail(
+              selectedParcelamiento.lotes
+          )} lotes) en el periodo ${escapeHtmlForEmail(periodLabel)}:`
+        : `Adicionalmente, presentamos el siguiente cuadro de valores para el periodo ${escapeHtmlForEmail(periodLabel)}:`;
+    const signatureLines = buildCotizacionFormalSignatureLines();
+    const signatureHtml = `<div style="margin-top:18px;">
+        <p style="margin:0 0 16px 0;">${escapeHtmlForEmail(signatureLines[0])}</p>
+        <p style="margin:0 0 10px 0;">${escapeHtmlForEmail(signatureLines[5])}</p>
+        <p style="margin:0 0 10px 0;">${escapeHtmlForEmail(signatureLines[7])}</p>
+        <p style="margin:0 0 10px 0;font-weight:700;color:#0f2f66;">${escapeHtmlForEmail(signatureLines[9])}</p>
+        <p style="margin:0;">${escapeHtmlForEmail(signatureLines[11])}</p>
+    </div>`;
+    const logoCid = normalizeText(options?.logoCid);
+    const logoHtml = logoCid
+        ? `<div style="margin-top:18px;text-align:center;">
+            <img src="cid:${escapeHtmlForEmail(logoCid)}" alt="Geo Rural" style="max-width:180px;width:46%;height:auto;">
+        </div>`
+        : '';
+    const postTableParagraphsHtml = buildCotizacionPostTableParagraphs(periodLabel)
+        .map((line) => {
+            if (!line) {
+                return '<div style="height:8px;"></div>';
+            }
+            const isSection = /^\d+\)\.-/.test(line);
+            if (isSection) {
+                return `<p style="margin:12px 0 6px 0;font-weight:700;color:#1f74bf;">${escapeHtmlForEmail(line)}</p>`;
+            }
+            return `<p style="margin:0 0 6px 0;color:#2d84d2;">${escapeHtmlForEmail(line)}</p>`;
+        })
+        .join('');
+    const customTemplateHtml = normalizeMailTemplateValue(options?.customHtmlTemplate, MAIL_TEMPLATE_MAX_LENGTH);
+    if (customTemplateHtml) {
+        const replacements = {
+            SALUDO: greeting,
+            FECHA: escapeHtmlForEmail(nowText),
+            PERIODO_UTM: escapeHtmlForEmail(periodLabel),
+            UTM_VIGENTE: escapeHtmlForEmail(formatCurrencyClp(summary?.utm?.valor)),
+            REFERENCIA_BLOQUE_HTML: referenceBlock,
+            TRAMO_BLOQUE_HTML: selectedBlock,
+            TABLA_VALORES_HTML: buildCotizacionParcelamientoTableHtml(parcelamientoRows, selectedParcelamiento),
+            PARRAFOS_POST_TABLA_HTML: postTableParagraphsHtml,
+            ATENCION_NOMBRE: escapeHtmlForEmail(userName),
+            ATENCION_SUCURSAL: escapeHtmlForEmail(branch),
+            FIRMA_HTML: signatureHtml,
+            LOGO_HTML: logoHtml
+        };
+        return renderMailTemplateHtml(customTemplateHtml, replacements);
+    }
+
+    return `<div style="font-family:Arial,Helvetica,sans-serif;background:#eef8ff;padding:20px 10px;color:#2d84d2;line-height:1.45;font-size:14px;">
+        <div style="max-width:780px;margin:0 auto;background:#ffffff;border:1px solid #d6e2ff;border-radius:14px;overflow:hidden;">
+            <div style="background:linear-gradient(135deg,#4ea7f8 0%,#2f86d7 100%);padding:16px 22px;color:#ffffff;">
+                <p style="margin:0;font-size:18px;font-weight:700;letter-spacing:0.2px;">Carta de Cotizacion Geo Rural</p>
+                <p style="margin:6px 0 0 0;font-size:12px;opacity:0.95;">Periodo ${escapeHtmlForEmail(periodLabel)} | UTM vigente ${escapeHtmlForEmail(
+                    formatCurrencyClp(summary?.utm?.valor)
+                )}</p>
+            </div>
+            <div style="padding:20px 22px 18px 22px;">
+                <p style="margin:0 0 12px 0;">${greeting}</p>
+                <p style="margin:0 0 8px 0;">Junto con saludar, tenemos el agrado de dirigirnos a Ud. a fin de dar respuesta a su consulta.</p>
+                <p style="margin:0 0 12px 0;color:#2d84d2;">Fecha: ${escapeHtmlForEmail(nowText)}<br>Periodo UTM: ${escapeHtmlForEmail(
+                    periodLabel
+                )}<br>UTM vigente: ${escapeHtmlForEmail(formatCurrencyClp(summary?.utm?.valor))}</p>
+                ${referenceBlock}
+                ${selectedBlock}
+                <p style="margin:0 0 10px 0;">${tableLeadText}</p>
+                ${buildCotizacionParcelamientoTableHtml(parcelamientoRows, selectedParcelamiento)}
+                <div style="margin-top:14px;padding:12px 14px;background:#f9fbff;border:1px solid #e4ebfb;border-radius:10px;">
+                    ${postTableParagraphsHtml}
+                </div>
+                <p style="margin:14px 0 8px 0;">Para mas informacion, se adjunta la carta de cotizacion en formato PDF con el detalle completo y la tabla actualizada al periodo correspondiente.</p>
+                <div style="margin-top:12px;padding:10px 12px;background:#f5f8ff;border-left:4px solid #2f86d7;border-radius:6px;">
+                    <p style="margin:0 0 4px 0;font-weight:700;color:#1f74bf;">Atencion Comercial</p>
+                    <p style="margin:0;color:#2d84d2;">Atendido por: ${escapeHtmlForEmail(userName)}<br>Sucursal: ${escapeHtmlForEmail(branch)}</p>
+                </div>
+                ${signatureHtml}
+                ${logoHtml}
+            </div>
+        </div>
+    </div>`;
+}
+
+function buildCotizacionEmailBody(summary, clientName, referenciaCliente, authUser, options = {}) {
+    return {
+        text: buildCotizacionEmailText(summary, clientName, referenciaCliente, authUser, options),
+        html: buildCotizacionEmailHtml(summary, clientName, referenciaCliente, authUser, options)
+    };
+}
+
+function escapeRegExpTemplateToken(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function renderMailTemplateHtml(template, replacements = {}) {
+    let html = String(template || '');
+    const entries = replacements && typeof replacements === 'object' ? Object.entries(replacements) : [];
+    entries.forEach(([token, rawValue]) => {
+        const pattern = new RegExp(`{{\\s*${escapeRegExpTemplateToken(token)}\\s*}}`, 'gi');
+        html = html.replace(pattern, String(rawValue ?? ''));
+    });
+    return html;
+}
+
+function buildDefaultCotizacionTemplateHtml() {
+    return `<!doctype html>
+<html lang="es">
+<body style="margin:0;padding:0;">
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#eef8ff;padding:20px 10px;color:#2d84d2;line-height:1.45;font-size:14px;">
+        <div style="max-width:780px;margin:0 auto;background:#ffffff;border:1px solid #d6e2ff;border-radius:14px;overflow:hidden;">
+            <div style="background:linear-gradient(135deg,#4ea7f8 0%,#2f86d7 100%);padding:16px 22px;color:#ffffff;">
+                <p style="margin:0;font-size:18px;font-weight:700;letter-spacing:0.2px;">Carta de Cotizacion Geo Rural</p>
+                <p style="margin:6px 0 0 0;font-size:12px;opacity:0.95;">Periodo {{PERIODO_UTM}} | UTM vigente {{UTM_VIGENTE}}</p>
+            </div>
+            <div style="padding:20px 22px 18px 22px;">
+                <p style="margin:0 0 12px 0;">{{SALUDO}}</p>
+                <p style="margin:0 0 8px 0;">Junto con saludar, tenemos el agrado de dirigirnos a Ud. a fin de dar respuesta a su consulta.</p>
+                <p style="margin:0 0 12px 0;color:#2d84d2;">Fecha: {{FECHA}}<br>Periodo UTM: {{PERIODO_UTM}}<br>UTM vigente: {{UTM_VIGENTE}}</p>
+                {{REFERENCIA_BLOQUE_HTML}}
+                {{TRAMO_BLOQUE_HTML}}
+                <p style="margin:0 0 10px 0;">Adicionalmente, presentamos el siguiente cuadro para el periodo {{PERIODO_UTM}}:</p>
+                {{TABLA_VALORES_HTML}}
+                <div style="margin-top:14px;padding:12px 14px;background:#f9fbff;border:1px solid #e4ebfb;border-radius:10px;">
+                    {{PARRAFOS_POST_TABLA_HTML}}
+                </div>
+                <p style="margin:14px 0 8px 0;">Para mas informacion, se adjunta la carta de cotizacion en formato PDF con el detalle completo y la tabla actualizada al periodo correspondiente.</p>
+                <div style="margin-top:12px;padding:10px 12px;background:#f5f8ff;border-left:4px solid #2f86d7;border-radius:6px;">
+                    <p style="margin:0 0 4px 0;font-weight:700;color:#1f74bf;">Atencion Comercial</p>
+                    <p style="margin:0;color:#2d84d2;">Atendido por: {{ATENCION_NOMBRE}}<br>Sucursal: {{ATENCION_SUCURSAL}}</p>
+                </div>
+                {{FIRMA_HTML}}
+                {{LOGO_HTML}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+function buildDefaultFacturaSingleTemplateHtml() {
+    return `<!doctype html>
+<html lang="es">
+<body style="margin:0;padding:16px;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#10213f;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:920px;margin:0 auto;background:#ffffff;border:1px solid #d2dced;border-radius:10px;overflow:hidden;">
+        <tr>
+            <td style="padding:16px 18px;background:#d7e4f7;border-bottom:1px solid #c2d4ee;">
+                <h2 style="margin:0;font-size:20px;line-height:1.3;color:#163463;">{{TITULO}}</h2>
+            </td>
+        </tr>
+        <tr>
+            <td style="padding:14px 18px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                    {{RESUMEN_FILAS_HTML}}
+                </table>
+                <div style="margin-top:2px;padding-top:8px;">
+                    <h3 style="margin:0 0 10px;font-size:16px;color:#163463;">Detalle de factura</h3>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                        {{DETALLE_FILAS_HTML}}
+                    </table>
+                </div>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
+}
+
+function buildDefaultFacturaPendingTemplateHtml() {
+    return `<!doctype html>
+<html lang="es">
+<body style="margin:0;padding:16px;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#10213f;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:920px;margin:0 auto;background:#ffffff;border:1px solid #d2dced;border-radius:10px;overflow:hidden;">
+        <tr>
+            <td style="padding:16px 18px;background:#d7e4f7;border-bottom:1px solid #c2d4ee;">
+                <h2 style="margin:0;font-size:20px;line-height:1.3;color:#163463;">{{TITULO}}</h2>
+            </td>
+        </tr>
+        <tr>
+            <td style="padding:14px 18px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
+                    {{RESUMEN_FILAS_HTML}}
+                </table>
+                <div style="margin-top:2px;padding-top:8px;">
+                    <h3 style="margin:0 0 10px;font-size:16px;color:#163463;">Resumen de facturas pendientes</h3>
+                    {{TABLA_RESUMEN_HTML}}
+                    {{DETALLES_FACTURAS_HTML}}
+                </div>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
+}
+
+function getDefaultMailTemplates() {
+    return {
+        cotizacionHtml: buildDefaultCotizacionTemplateHtml(),
+        facturaSingleHtml: buildDefaultFacturaSingleTemplateHtml(),
+        facturaPendingHtml: buildDefaultFacturaPendingTemplateHtml()
+    };
+}
+
+function normalizeMailTemplateValue(value, maxLength = MAIL_TEMPLATE_MAX_LENGTH) {
+    const normalized = String(value || '').replace(/\u0000/g, '').trim();
+    if (!normalized) {
+        return '';
+    }
+    if (!Number.isInteger(maxLength) || maxLength <= 0) {
+        return normalized;
+    }
+    return normalized.slice(0, maxLength);
+}
+
+function extractMailTemplatesFromRow(row) {
+    const source = row && typeof row === 'object' ? row : {};
+    return {
+        cotizacionHtml: normalizeMailTemplateValue(source.cotizacion_html_template ?? source.cotizacionHtml),
+        facturaSingleHtml: normalizeMailTemplateValue(source.factura_single_html_template ?? source.facturaSingleHtml),
+        facturaPendingHtml: normalizeMailTemplateValue(source.factura_pending_html_template ?? source.facturaPendingHtml)
+    };
+}
+
+function resolveMailTemplatesForUse(row) {
+    const defaults = getDefaultMailTemplates();
+    const stored = extractMailTemplatesFromRow(row);
+    return {
+        cotizacionHtml: stored.cotizacionHtml || defaults.cotizacionHtml,
+        facturaSingleHtml: stored.facturaSingleHtml || defaults.facturaSingleHtml,
+        facturaPendingHtml: stored.facturaPendingHtml || defaults.facturaPendingHtml
+    };
+}
+
+function normalizeMailTemplatesPayload(rawTemplates) {
+    const source = rawTemplates && typeof rawTemplates === 'object' ? rawTemplates : {};
+    const templates = {};
+    MAIL_TEMPLATE_KEYS.forEach((key) => {
+        templates[key] = normalizeMailTemplateValue(source[key], MAIL_TEMPLATE_MAX_LENGTH);
+    });
+    return templates;
 }
 
 function buildCotizacionPdfBuffer(summary, referenciaCliente, authUser) {
@@ -2158,6 +2606,9 @@ async function getStoredCorreoConfigurationRow() {
                 smtp_password,
                 smtp_from_email,
                 smtp_from_name,
+                cotizacion_html_template,
+                factura_single_html_template,
+                factura_pending_html_template,
                 updated_by_id,
                 updated_by_nombre,
                 created_at,
@@ -2226,6 +2677,7 @@ async function buildCurrentCotizacionSummary() {
     );
 
     const servicios = rows.map((row) => toCotizacionServicioResumen(row, utmValue)).filter(Boolean);
+    const parcelamientoRows = buildCotizacionParcelamientoRows(utmValue);
     const totalUtm = servicios.reduce((sum, item) => sum + Number(item.valorUtm || 0), 0);
     const totalPesos = servicios.reduce((sum, item) => sum + Number(item.valorPesos || 0), 0);
     const documentUrl = encodeURI(COTIZACION_DOCUMENT_PATH);
@@ -2243,6 +2695,14 @@ async function buildCurrentCotizacionSummary() {
                 registradoPor: normalizeText(status?.utm?.registradoPor),
                 updatedAt: normalizeText(status?.utm?.updatedAt)
             },
+            parcelamiento: parcelamientoRows.map((row) => ({
+                key: row.key,
+                lotes: row.lotes,
+                valorUtm: Number(row.valorUtm.toFixed(2)),
+                neto: row.neto,
+                iva: row.iva,
+                total: row.total
+            })),
             servicios,
             totalUtm: totalUtm.toFixed(2),
             totalPesos: totalPesos.toFixed(2),
@@ -2591,6 +3051,24 @@ async function ensureUsersMustChangePasswordColumn() {
     await pool.query('UPDATE usuarios SET must_change_password = 0 WHERE must_change_password IS NULL');
 }
 
+async function ensureCorreoTemplateColumns() {
+    await ensureColumn(
+        'correo_configuracion',
+        'cotizacion_html_template',
+        '`cotizacion_html_template` LONGTEXT NULL AFTER smtp_from_name'
+    );
+    await ensureColumn(
+        'correo_configuracion',
+        'factura_single_html_template',
+        '`factura_single_html_template` LONGTEXT NULL AFTER cotizacion_html_template'
+    );
+    await ensureColumn(
+        'correo_configuracion',
+        'factura_pending_html_template',
+        '`factura_pending_html_template` LONGTEXT NULL AFTER factura_single_html_template'
+    );
+}
+
 async function createBranchesTable() {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS sucursales (
@@ -2807,6 +3285,9 @@ async function createCorreoConfiguracionTable() {
             smtp_password VARCHAR(255) NULL,
             smtp_from_email VARCHAR(255) NOT NULL DEFAULT '',
             smtp_from_name VARCHAR(120) NULL,
+            cotizacion_html_template LONGTEXT NULL,
+            factura_single_html_template LONGTEXT NULL,
+            factura_pending_html_template LONGTEXT NULL,
             updated_by_id INT UNSIGNED NULL,
             updated_by_nombre VARCHAR(120) NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3288,6 +3769,7 @@ async function initDatabase() {
         await createUtmMensualTable();
         await createCotizacionServiciosTable();
         await createCorreoConfiguracionTable();
+        await ensureCorreoTemplateColumns();
         await seedCotizacionServiciosDefaults();
         await ensureFacturaSolicitudesUniqueIngresoIndex();
         await seedDefaultUsers();
@@ -3531,6 +4013,20 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 app.use('/api', requireAuth);
 app.use('/api', requirePasswordChangeCompleted);
 
+app.get('/api/mail-templates', async (req, res) => {
+    try {
+        const storedRow = await getStoredCorreoConfigurationRow();
+        return res.json({
+            templates: resolveMailTemplatesForUse(storedRow),
+            updatedAt: storedRow?.updated_at instanceof Date ? storedRow.updated_at.toISOString() : normalizeText(storedRow?.updated_at || ''),
+            updatedBy: normalizeText(storedRow?.updated_by_nombre || '')
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar las plantillas de correo.' });
+    }
+});
+
 app.get('/api/utm/mes-actual', async (req, res) => {
     try {
         if (!canUseSecretaryFeatures(req.authUser)) {
@@ -3634,6 +4130,10 @@ app.post('/api/cotizaciones/enviar', async (req, res) => {
         const destinationEmail = normalizeText(req.body?.destinationEmail).toLowerCase();
         const clientName = normalizeText(req.body?.clientName || req.body?.nombreCliente);
         const referenciaCliente = normalizeText(req.body?.referenciaCliente);
+        const parcelamientoRangeInput = normalizeText(
+            req.body?.parcelamientoRangeKey ?? req.body?.parcelamientoRange ?? req.body?.tramoParcelamiento
+        );
+        const parcelamientoRangeKey = normalizeCotizacionParcelamientoKey(parcelamientoRangeInput);
         if (!clientName) {
             return res.status(400).json({ message: 'Debes indicar el nombre del cliente.' });
         }
@@ -3652,6 +4152,9 @@ app.post('/api/cotizaciones/enviar', async (req, res) => {
         if (referenciaCliente && exceedsMaxLength(referenciaCliente, 500)) {
             return res.status(400).json({ message: 'La referencia personalizada excede el maximo permitido de 500 caracteres.' });
         }
+        if (parcelamientoRangeInput && exceedsMaxLength(parcelamientoRangeInput, 80)) {
+            return res.status(400).json({ message: 'El rango de parcelamiento excede el maximo permitido de 80 caracteres.' });
+        }
 
         const summaryResult = await buildCurrentCotizacionSummary();
         if (!summaryResult.ok) {
@@ -3667,6 +4170,26 @@ app.post('/api/cotizaciones/enviar', async (req, res) => {
                 message: 'No hay servicios estandar activos para generar la cotizacion.'
             });
         }
+        const parcelamientoRows =
+            Array.isArray(summary?.parcelamiento) && summary.parcelamiento.length > 0
+                ? summary.parcelamiento.map((row) => ({
+                      key: normalizeCotizacionParcelamientoKey(row?.key || row?.lotes),
+                      lotes: normalizeText(row?.lotes),
+                      valorUtm: Number(row?.valorUtm),
+                      neto: Number(row?.neto),
+                      iva: Number(row?.iva),
+                      total: Number(row?.total)
+                  }))
+                : buildCotizacionParcelamientoRows(summary?.utm?.valor);
+
+        let selectedParcelamiento = null;
+        if (parcelamientoRangeKey) {
+            selectedParcelamiento = parcelamientoRows.find((row) => normalizeCotizacionParcelamientoKey(row?.key || row?.lotes) === parcelamientoRangeKey) || null;
+            if (!selectedParcelamiento) {
+                return res.status(400).json({ message: 'El rango de parcelamiento seleccionado no es valido.' });
+            }
+        }
+        const emailParcelamientoRows = selectedParcelamiento ? [selectedParcelamiento] : parcelamientoRows;
 
         const attachmentBuffer = await buildCotizacionTemplatePdfBuffer(summary);
         const periodLabel = formatMonthlyPeriodLabel(summary?.periodo?.anio, summary?.periodo?.mes);
@@ -3679,11 +4202,18 @@ app.post('/api/cotizaciones/enviar', async (req, res) => {
         }
 
         const fromAddress = buildSmtpFromAddress(smtpResolution.config);
+        const mailTemplates = resolveMailTemplatesForUse(smtpResolution.storedRow);
+        const emailBody = buildCotizacionEmailBody(summary, clientName, referenciaCliente, req.authUser, {
+            parcelamientoRows: emailParcelamientoRows,
+            selectedParcelamiento,
+            customHtmlTemplate: mailTemplates.cotizacionHtml
+        });
         await transporter.sendMail({
             from: fromAddress,
             to: destinationEmail,
             subject,
-            text: buildCotizacionEmailText(summary, clientName, referenciaCliente, req.authUser),
+            text: emailBody.text,
+            html: emailBody.html,
             attachments: [
                 {
                     filename: buildCotizacionAttachmentFileName(summary),
@@ -4931,6 +5461,114 @@ app.put('/api/admin/correo-config', requireSuper, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'No fue posible guardar la configuracion de correo.' });
+    }
+});
+
+app.get('/api/admin/correo-plantillas', requireSuper, async (req, res) => {
+    try {
+        const storedRow = await getStoredCorreoConfigurationRow();
+        const defaults = getDefaultMailTemplates();
+        const templates = resolveMailTemplatesForUse(storedRow);
+        const updatedAtRaw = storedRow?.updated_at || null;
+        const updatedAtIso =
+            updatedAtRaw instanceof Date
+                ? updatedAtRaw.toISOString()
+                : normalizeText(updatedAtRaw || '');
+
+        return res.json({
+            templates,
+            defaults,
+            updatedAt: updatedAtIso,
+            updatedBy: normalizeText(storedRow?.updated_by_nombre || '')
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar las plantillas de correo.' });
+    }
+});
+
+app.put('/api/admin/correo-plantillas', requireSuper, async (req, res) => {
+    try {
+        const rawTemplates = req.body?.templates ?? req.body;
+        const templates = normalizeMailTemplatesPayload(rawTemplates);
+
+        for (const key of MAIL_TEMPLATE_KEYS) {
+            const rawValue = rawTemplates && typeof rawTemplates === 'object' ? rawTemplates[key] : '';
+            if (rawValue && String(rawValue).length > MAIL_TEMPLATE_MAX_LENGTH) {
+                return res.status(400).json({
+                    message: `La plantilla ${key} excede el maximo permitido de ${MAIL_TEMPLATE_MAX_LENGTH} caracteres.`
+                });
+            }
+        }
+
+        const updatedById = Number(req.authUser?.id);
+        const updatedByName = normalizeText(req.authUser?.nombre || req.authUser?.username || 'superusuario');
+        const existingRow = await getStoredCorreoConfigurationRow();
+
+        if (existingRow) {
+            await pool.execute(
+                `
+                    UPDATE correo_configuracion
+                    SET
+                        cotizacion_html_template = ?,
+                        factura_single_html_template = ?,
+                        factura_pending_html_template = ?,
+                        updated_by_id = ?,
+                        updated_by_nombre = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `,
+                [
+                    templates.cotizacionHtml || null,
+                    templates.facturaSingleHtml || null,
+                    templates.facturaPendingHtml || null,
+                    Number.isInteger(updatedById) && updatedById > 0 ? updatedById : null,
+                    updatedByName || null,
+                    SMTP_CONFIG_SINGLETON_ID
+                ]
+            );
+        } else {
+            await pool.execute(
+                `
+                    INSERT INTO correo_configuracion (
+                        id,
+                        cotizacion_html_template,
+                        factura_single_html_template,
+                        factura_pending_html_template,
+                        updated_by_id,
+                        updated_by_nombre
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `,
+                [
+                    SMTP_CONFIG_SINGLETON_ID,
+                    templates.cotizacionHtml || null,
+                    templates.facturaSingleHtml || null,
+                    templates.facturaPendingHtml || null,
+                    Number.isInteger(updatedById) && updatedById > 0 ? updatedById : null,
+                    updatedByName || null
+                ]
+            );
+        }
+
+        const savedRow = await getStoredCorreoConfigurationRow();
+        const resolvedTemplates = resolveMailTemplatesForUse(savedRow);
+        const updatedAtRaw = savedRow?.updated_at || null;
+        const updatedAtIso =
+            updatedAtRaw instanceof Date
+                ? updatedAtRaw.toISOString()
+                : normalizeText(updatedAtRaw || '');
+
+        return res.json({
+            message: 'Plantillas de correo guardadas correctamente.',
+            templates: resolvedTemplates,
+            defaults: getDefaultMailTemplates(),
+            updatedAt: updatedAtIso,
+            updatedBy: normalizeText(savedRow?.updated_by_nombre || updatedByName)
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible guardar las plantillas de correo.' });
     }
 });
 
