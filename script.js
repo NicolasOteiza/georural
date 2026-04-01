@@ -17,7 +17,7 @@ const DEFAULT_DOCUMENT_GROUP_TITLES = [
 const OPERATOR_LAST_DEST_EMAIL_STORAGE = 'geo_rural_last_invoice_destination_email';
 const SECRETARY_DAILY_ALERT_STORAGE_PREFIX = 'geo_rural_secretary_no_movement_seen_';
 const SECRETARY_NO_MOVEMENT_DAYS = 8;
-const APP_BUILD = '2026-03-27-06';
+const APP_BUILD = '2026-03-28-01';
 const MAIL_SEND_PROGRESS_MIN_MS = 1600;
 const MAIL_SEND_PROGRESS_FINAL_MS = 900;
 const REQUESTED_INVOICES_PAGE_SIZE = 5;
@@ -408,6 +408,8 @@ let editingHistoryIngreso = '';
 let secretaryNoMovementRecords = [];
 let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
+let searchMatchCandidates = [];
+let selectedSearchMatchIngreso = '';
 let dateRangeAvailableBranches = [];
 let pendingMonthlyUtmStatus = null;
 let secretariaQuotationSummary = null;
@@ -419,7 +421,12 @@ let adminMailTemplateDrafts = null;
 let adminMailTemplateActiveType = 'cotizacionHtml';
 let adminMailTemplatePendingPreviewCount = ADMIN_PENDING_MAIL_PREVIEW_DEFAULT_ITEMS;
 let adminUsageStatsLoaded = null;
+let adminMaintenanceStatusLoaded = null;
+let adminMaintenanceUpdateInProgress = false;
+let adminLoginRouteNoticeStatusLoaded = null;
+let adminLoginRouteNoticeUpdateInProgress = false;
 let mailSendProgressOpenedAt = 0;
+let authLoginInProgress = false;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
 const REGISTRO_REQUIRED_FIELD_IDS = ['nombre', 'rut', 'region', 'comuna', 'rol'];
 const REGISTRO_INLINE_ERROR_FIELD_IDS = [...REGISTRO_REQUIRED_FIELD_IDS, 'correo', 'numLotes'];
@@ -451,6 +458,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         utmConfirmValue: document.getElementById('utmConfirmValue'),
         utmCaptureMessage: document.getElementById('utmCaptureMessage'),
         loginForm: document.getElementById('loginForm'),
+        loginSubmitBtn: document.querySelector('#loginForm button[type="submit"]'),
         guestLoginBtn: document.getElementById('guestLoginBtn'),
         loginUsername: document.getElementById('loginUsername'),
         loginPassword: document.getElementById('loginPassword'),
@@ -474,14 +482,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminEmailSection: document.getElementById('adminEmailSection'),
         adminMailTemplatesSection: document.getElementById('adminMailTemplatesSection'),
         adminUsageSection: document.getElementById('adminUsageSection'),
+        adminMaintenanceSection: document.getElementById('adminMaintenanceSection'),
         adminToggleUsersBtn: document.getElementById('adminToggleUsersBtn'),
         adminToggleBranchesBtn: document.getElementById('adminToggleBranchesBtn'),
         adminToggleDocumentsBtn: document.getElementById('adminToggleDocumentsBtn'),
         adminToggleEmailBtn: document.getElementById('adminToggleEmailBtn'),
         adminToggleMailTemplatesBtn: document.getElementById('adminToggleMailTemplatesBtn'),
         adminToggleUsageBtn: document.getElementById('adminToggleUsageBtn'),
+        adminToggleMaintenanceBtn: document.getElementById('adminToggleMaintenanceBtn'),
         secretariaViewInvoicesBtn: document.getElementById('secretariaViewInvoicesBtn'),
         secretariaQuotationBtn: document.getElementById('secretariaQuotationBtn'),
+        secretariaEditUtmBtn: document.getElementById('secretariaEditUtmBtn'),
         secretariaNoMovementBtn: document.getElementById('secretariaNoMovementBtn'),
         adminCreateUserBtn: document.getElementById('adminCreateUserBtn'),
         adminCancelEditBtn: document.getElementById('adminCancelEditBtn'),
@@ -541,6 +552,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminUsageRefreshBtn: document.getElementById('adminUsageRefreshBtn'),
         adminUsageBody: document.getElementById('adminUsageBody'),
         adminUsageMessage: document.getElementById('adminUsageMessage'),
+        adminMaintenanceState: document.getElementById('adminMaintenanceState'),
+        adminMaintenanceUpdatedAt: document.getElementById('adminMaintenanceUpdatedAt'),
+        adminMaintenanceUpdatedBy: document.getElementById('adminMaintenanceUpdatedBy'),
+        adminMaintenanceEnableBtn: document.getElementById('adminMaintenanceEnableBtn'),
+        adminMaintenanceDisableBtn: document.getElementById('adminMaintenanceDisableBtn'),
+        adminMaintenanceRefreshBtn: document.getElementById('adminMaintenanceRefreshBtn'),
+        adminMaintenanceMessage: document.getElementById('adminMaintenanceMessage'),
+        adminLoginNoticeState: document.getElementById('adminLoginNoticeState'),
+        adminLoginNoticeUrl: document.getElementById('adminLoginNoticeUrl'),
+        adminLoginNoticeExpiresAt: document.getElementById('adminLoginNoticeExpiresAt'),
+        adminLoginNoticeUpdatedBy: document.getElementById('adminLoginNoticeUpdatedBy'),
+        adminLoginNoticeEnableBtn: document.getElementById('adminLoginNoticeEnableBtn'),
+        adminLoginNoticeDisableBtn: document.getElementById('adminLoginNoticeDisableBtn'),
+        adminLoginNoticeRefreshBtn: document.getElementById('adminLoginNoticeRefreshBtn'),
+        adminLoginNoticeMessage: document.getElementById('adminLoginNoticeMessage'),
         numIngreso: document.getElementById('numIngreso'),
         numIngresoHint: document.getElementById('numIngresoHint'),
         region: document.getElementById('region'),
@@ -686,7 +712,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         dateRangeResultsBody: document.getElementById('dateRangeResultsBody'),
         dateRangeMessage: document.getElementById('dateRangeMessage'),
         dateRangeAcceptBtn: document.getElementById('dateRangeAcceptBtn'),
-        dateRangeCancelBtn: document.getElementById('dateRangeCancelBtn')
+        dateRangeCancelBtn: document.getElementById('dateRangeCancelBtn'),
+        searchMatchModalOverlay: document.getElementById('searchMatchModalOverlay'),
+        searchMatchResultsBody: document.getElementById('searchMatchResultsBody'),
+        searchMatchMessage: document.getElementById('searchMatchMessage'),
+        searchMatchAcceptBtn: document.getElementById('searchMatchAcceptBtn'),
+        searchMatchCancelBtn: document.getElementById('searchMatchCancelBtn')
     };
 
     // Fuerza estado inicial: solo login visible hasta validar sesion.
@@ -723,13 +754,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     setFormMessage(ui.adminBranchMessage, '', '');
     setFormMessage(ui.adminDocumentMessage, '', '');
     setFormMessage(ui.adminEmailMessage, '', '');
+    setFormMessage(ui.adminMailTemplateMessage, '', '');
     setFormMessage(ui.adminUsageMessage, '', '');
+    setFormMessage(ui.adminMaintenanceMessage, '', '');
+    setFormMessage(ui.adminLoginNoticeMessage, '', '');
     if (ui.adminEmailSource) {
         ui.adminEmailSource.textContent = '';
     }
     if (ui.adminUsageSummary) {
         ui.adminUsageSummary.textContent = 'Sin datos de actividad disponibles.';
     }
+    clearAdminMaintenanceState();
     setFormMessage(ui.operatorInvoiceMessage, '', '');
     setFormMessage(ui.facturaFormMessage, '', '');
     setFormMessage(ui.invoiceModalMessage, '', '');
@@ -745,6 +780,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setFormMessage(ui.secretaryNoMovementMessage, '', '');
     setFormMessage(ui.operatorDocAlertsMessage, '', '');
     setFormMessage(ui.dateRangeMessage, '', '');
+    setFormMessage(ui.searchMatchMessage, '', '');
     initializeDocumentOptions();
     initializeOperatorBillingFeatures();
     registerRegistroRequiredFieldValidationListeners();
@@ -821,11 +857,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ui.adminToggleUsageBtn) {
         ui.adminToggleUsageBtn.addEventListener('click', () => void handleAdminToggleUsage());
     }
+    if (ui.adminToggleMaintenanceBtn) {
+        ui.adminToggleMaintenanceBtn.addEventListener('click', () => void handleAdminToggleMaintenance());
+    }
+    if (ui.adminMaintenanceRefreshBtn) {
+        ui.adminMaintenanceRefreshBtn.addEventListener('click', () => void loadAdminMaintenanceStatus());
+    }
+    if (ui.adminMaintenanceEnableBtn) {
+        ui.adminMaintenanceEnableBtn.addEventListener('click', () => void updateAdminMaintenanceMode(true));
+    }
+    if (ui.adminMaintenanceDisableBtn) {
+        ui.adminMaintenanceDisableBtn.addEventListener('click', () => void updateAdminMaintenanceMode(false));
+    }
+    if (ui.adminLoginNoticeRefreshBtn) {
+        ui.adminLoginNoticeRefreshBtn.addEventListener('click', () => void loadAdminMaintenanceStatus());
+    }
+    if (ui.adminLoginNoticeEnableBtn) {
+        ui.adminLoginNoticeEnableBtn.addEventListener('click', () => void updateAdminLoginRouteNotice(true));
+    }
+    if (ui.adminLoginNoticeDisableBtn) {
+        ui.adminLoginNoticeDisableBtn.addEventListener('click', () => void updateAdminLoginRouteNotice(false));
+    }
     if (ui.secretariaViewInvoicesBtn) {
         ui.secretariaViewInvoicesBtn.addEventListener('click', handleOpenSecretariaInvoicesModal);
     }
     if (ui.secretariaQuotationBtn) {
         ui.secretariaQuotationBtn.addEventListener('click', () => void handleOpenSecretariaQuotationModal());
+    }
+    if (ui.secretariaEditUtmBtn) {
+        ui.secretariaEditUtmBtn.addEventListener('click', () => void handleOpenMonthlyUtmEdit());
     }
     if (ui.secretariaNoMovementBtn) {
         ui.secretariaNoMovementBtn.addEventListener('click', () => void handleOpenSecretaryNoMovementModal());
@@ -1062,6 +1122,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         ui.dateRangeModalOverlay.addEventListener('click', (event) => {
             if (event.target === ui.dateRangeModalOverlay) {
                 closeDateRangeModal();
+            }
+        });
+    }
+    if (ui.searchMatchAcceptBtn) {
+        ui.searchMatchAcceptBtn.addEventListener('click', () => void handleSearchMatchAcceptSelection());
+    }
+    if (ui.searchMatchCancelBtn) {
+        ui.searchMatchCancelBtn.addEventListener('click', closeSearchMatchModal);
+    }
+    if (ui.searchMatchModalOverlay) {
+        ui.searchMatchModalOverlay.addEventListener('click', (event) => {
+            if (event.target === ui.searchMatchModalOverlay) {
+                closeSearchMatchModal();
             }
         });
     }
@@ -1304,11 +1377,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateRegistroActionButtons();
     syncAdminRoleOptionsForCurrentUser();
     syncSecretariaQuotationTemplateControls();
+    const redirectedToMaintenance = await enforceMaintenanceRedirectIfNeeded();
+    if (redirectedToMaintenance) {
+        return;
+    }
     await bootstrapSession();
 });
 
+function setAuthLoginBusyState(isBusy, mode = 'credentials') {
+    const busy = Boolean(isBusy);
+    const loginMode = mode === 'guest' ? 'guest' : 'credentials';
+    const submitBtn = ui?.loginSubmitBtn;
+    const guestBtn = ui?.guestLoginBtn;
+
+    if (ui?.loginUsername) {
+        ui.loginUsername.disabled = busy;
+    }
+    if (ui?.loginPassword) {
+        ui.loginPassword.disabled = busy;
+    }
+
+    if (submitBtn) {
+        if (!submitBtn.dataset.defaultLabel) {
+            submitBtn.dataset.defaultLabel = String(submitBtn.textContent || '').trim() || 'INGRESAR';
+        }
+        submitBtn.disabled = busy;
+        submitBtn.classList.toggle('is-loading', busy && loginMode === 'credentials');
+        submitBtn.setAttribute('aria-busy', busy && loginMode === 'credentials' ? 'true' : 'false');
+        submitBtn.textContent = busy && loginMode === 'credentials' ? 'VALIDANDO...' : submitBtn.dataset.defaultLabel;
+    }
+
+    if (guestBtn) {
+        if (!guestBtn.dataset.defaultLabel) {
+            guestBtn.dataset.defaultLabel = String(guestBtn.textContent || '').trim() || 'INGRESAR COMO INVITADO';
+        }
+        guestBtn.disabled = busy;
+        guestBtn.classList.toggle('is-loading', busy && loginMode === 'guest');
+        guestBtn.setAttribute('aria-busy', busy && loginMode === 'guest' ? 'true' : 'false');
+        guestBtn.textContent = busy && loginMode === 'guest' ? 'INGRESANDO...' : guestBtn.dataset.defaultLabel;
+    }
+}
+
 async function handleLoginSubmit(event) {
     event.preventDefault();
+
+    if (authLoginInProgress) {
+        return;
+    }
 
     const username = ui.loginUsername.value.trim();
     const password = ui.loginPassword.value;
@@ -1317,6 +1432,10 @@ async function handleLoginSubmit(event) {
         setFormMessage(ui.loginMessage, 'Ingresa usuario y contrasena.', 'error');
         return;
     }
+
+    authLoginInProgress = true;
+    setAuthLoginBusyState(true, 'credentials');
+    setFormMessage(ui.loginMessage, 'Validando credenciales...', '');
 
     try {
         const result = await apiRequest('/auth/login', {
@@ -1344,10 +1463,21 @@ async function handleLoginSubmit(event) {
 
         const fallbackMessage = normalizeText(error?.message) || 'No fue posible iniciar sesion.';
         setFormMessage(ui.loginMessage, fallbackMessage, 'error');
+    } finally {
+        authLoginInProgress = false;
+        setAuthLoginBusyState(false);
     }
 }
 
 async function handleGuestLogin() {
+    if (authLoginInProgress) {
+        return;
+    }
+
+    authLoginInProgress = true;
+    setAuthLoginBusyState(true, 'guest');
+    setFormMessage(ui.loginMessage, 'Validando acceso invitado...', '');
+
     try {
         const result = await apiRequest('/auth/guest', {
             method: 'POST',
@@ -1369,6 +1499,9 @@ async function handleGuestLogin() {
             currentUser = null;
         }
         setFormMessage(ui.loginMessage, error.message, 'error');
+    } finally {
+        authLoginInProgress = false;
+        setAuthLoginBusyState(false);
     }
 }
 
@@ -1449,6 +1582,36 @@ async function activateAuthenticatedUser(user, options = {}) {
     void maybeShowSecretaryNoMovementAlert(currentUser);
 }
 
+async function enforceMaintenanceRedirectIfNeeded() {
+    try {
+        const statusPayload = await apiRequest('/public/system-status', {
+            skipAuthRedirect: true,
+            skipPasswordRedirect: true
+        });
+        const maintenanceEnabled = Boolean(statusPayload?.maintenance?.enabled);
+        if (!maintenanceEnabled) {
+            return false;
+        }
+
+        try {
+            const mePayload = await apiRequest('/auth/me', {
+                skipAuthRedirect: true,
+                skipPasswordRedirect: true
+            });
+            if (isSuperUser(mePayload?.user)) {
+                return false;
+            }
+        } catch (error) {
+            // Sin sesion valida; se aplica redireccion.
+        }
+
+        window.location.href = '../../mantenimiento.html';
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function fetchMonthlyUtmStatusIfNeeded(user) {
     if (!canUseSecretaryFeatures(user) || isGuestUser(user)) {
         pendingMonthlyUtmStatus = null;
@@ -1461,6 +1624,25 @@ async function fetchMonthlyUtmStatusIfNeeded(user) {
     });
     pendingMonthlyUtmStatus = status || null;
     return status || null;
+}
+
+async function handleOpenMonthlyUtmEdit() {
+    if (!currentUser || !canUseSecretaryFeatures(currentUser)) {
+        setFormMessage(ui.formMessage, 'Solo SECRETARIA o SUPER pueden editar la UTM mensual.', 'error');
+        return;
+    }
+
+    try {
+        const status = await fetchMonthlyUtmStatusIfNeeded(currentUser);
+        showMonthlyUtmCaptureCard(
+            currentUser,
+            status || pendingMonthlyUtmStatus || null,
+            '',
+            { manualEdit: true }
+        );
+    } catch (error) {
+        setFormMessage(ui.formMessage, error.message || 'No fue posible cargar la UTM mensual.', 'error');
+    }
 }
 
 function showAppForUser(user) {
@@ -1539,11 +1721,17 @@ function showAppForUser(user) {
         if (ui.adminToggleUsageBtn) {
             ui.adminToggleUsageBtn.classList.toggle('hidden', !isSuperUser(user));
         }
+        if (ui.adminToggleMaintenanceBtn) {
+            ui.adminToggleMaintenanceBtn.classList.toggle('hidden', !isSuperUser(user));
+        }
         if (ui.secretariaViewInvoicesBtn) {
             ui.secretariaViewInvoicesBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
         }
         if (ui.secretariaQuotationBtn) {
             ui.secretariaQuotationBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
+        }
+        if (ui.secretariaEditUtmBtn) {
+            ui.secretariaEditUtmBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
         }
         if (ui.secretariaNoMovementBtn) {
             ui.secretariaNoMovementBtn.classList.toggle('hidden', !canUseSecretaryFeatures(user));
@@ -1560,6 +1748,7 @@ function showAppForUser(user) {
         setAdminEmailVisibility(false);
         setAdminMailTemplatesVisibility(false);
         setAdminUsageVisibility(false);
+        setAdminMaintenanceVisibility(false);
         adminIngresoMode = 'current';
         void setAdminIngresoMode('current', { refreshIngreso: false });
 
@@ -1572,10 +1761,12 @@ function showAppForUser(user) {
                 void loadAdminEmailConfig();
                 void loadAdminMailTemplates();
                 void loadAdminUsageStats();
+                void loadAdminMaintenanceStatus({ silent: true });
             } else {
                 clearAdminEmailConfigState();
                 clearAdminMailTemplatesState();
                 clearAdminUsageStatsState();
+                clearAdminMaintenanceState();
             }
         } else {
             renderAdminUsers([]);
@@ -1586,12 +1777,15 @@ function showAppForUser(user) {
             clearAdminEmailConfigState();
             clearAdminMailTemplatesState();
             clearAdminUsageStatsState();
+            clearAdminMaintenanceState();
             setFormMessage(ui.adminMessage, '', '');
             setFormMessage(ui.adminBranchMessage, '', '');
             setFormMessage(ui.adminDocumentMessage, '', '');
             setFormMessage(ui.adminEmailMessage, '', '');
             setFormMessage(ui.adminMailTemplateMessage, '', '');
             setFormMessage(ui.adminUsageMessage, '', '');
+            setFormMessage(ui.adminMaintenanceMessage, '', '');
+            setFormMessage(ui.adminLoginNoticeMessage, '', '');
         }
     } else {
         ui.adminPanel.classList.add('hidden');
@@ -1618,11 +1812,17 @@ function showAppForUser(user) {
         if (ui.adminToggleUsageBtn) {
             ui.adminToggleUsageBtn.classList.add('hidden');
         }
+        if (ui.adminToggleMaintenanceBtn) {
+            ui.adminToggleMaintenanceBtn.classList.add('hidden');
+        }
         if (ui.secretariaViewInvoicesBtn) {
             ui.secretariaViewInvoicesBtn.classList.add('hidden');
         }
         if (ui.secretariaQuotationBtn) {
             ui.secretariaQuotationBtn.classList.add('hidden');
+        }
+        if (ui.secretariaEditUtmBtn) {
+            ui.secretariaEditUtmBtn.classList.add('hidden');
         }
         if (ui.secretariaNoMovementBtn) {
             ui.secretariaNoMovementBtn.classList.add('hidden');
@@ -1633,13 +1833,17 @@ function showAppForUser(user) {
         setAdminBranchesVisibility(false);
         setAdminDocumentsVisibility(false);
         setAdminEmailVisibility(false);
+        setAdminMailTemplatesVisibility(false);
         setAdminUsageVisibility(false);
+        setAdminMaintenanceVisibility(false);
         renderAdminUsers([]);
         renderBranches([]);
         renderAdminDocuments([]);
         populateAdminSucursalSelect([]);
         clearAdminEmailConfigState();
+        clearAdminMailTemplatesState();
         clearAdminUsageStatsState();
+        clearAdminMaintenanceState();
         exitDocumentEditMode();
         if (canUseOperatorBilling(user)) {
             renderOperatorPendingInvoices();
@@ -1653,6 +1857,8 @@ function showAppForUser(user) {
 }
 
 function showAuthCard(message = '') {
+    authLoginInProgress = false;
+    setAuthLoginBusyState(false);
     if (ui.appTopPanels) {
         ui.appTopPanels.classList.add('hidden');
     }
@@ -1690,14 +1896,23 @@ function showAuthCard(message = '') {
     if (ui.adminToggleEmailBtn) {
         ui.adminToggleEmailBtn.classList.add('hidden');
     }
+    if (ui.adminToggleMailTemplatesBtn) {
+        ui.adminToggleMailTemplatesBtn.classList.add('hidden');
+    }
     if (ui.adminToggleUsageBtn) {
         ui.adminToggleUsageBtn.classList.add('hidden');
+    }
+    if (ui.adminToggleMaintenanceBtn) {
+        ui.adminToggleMaintenanceBtn.classList.add('hidden');
     }
     if (ui.secretariaViewInvoicesBtn) {
         ui.secretariaViewInvoicesBtn.classList.add('hidden');
     }
     if (ui.secretariaQuotationBtn) {
         ui.secretariaQuotationBtn.classList.add('hidden');
+    }
+    if (ui.secretariaEditUtmBtn) {
+        ui.secretariaEditUtmBtn.classList.add('hidden');
     }
     if (ui.secretariaNoMovementBtn) {
         ui.secretariaNoMovementBtn.classList.add('hidden');
@@ -1709,6 +1924,7 @@ function showAuthCard(message = '') {
     }
     setOperatorBillingVisibility(false);
     closeDateRangeModal();
+    closeSearchMatchModal();
     closeSecretariaInvoicesModal();
     closeSecretariaQuotationModal();
     closeInvoiceEmailPrompt();
@@ -1731,14 +1947,25 @@ function showAuthCard(message = '') {
     setAdminUsersVisibility(false);
     setAdminBranchesVisibility(false);
     setAdminDocumentsVisibility(false);
+    setAdminEmailVisibility(false);
+    setAdminMailTemplatesVisibility(false);
     setAdminUsageVisibility(false);
+    setAdminMaintenanceVisibility(false);
     if (ui.adminEmailSection) {
         ui.adminEmailSection.classList.add('hidden');
+    }
+    if (ui.adminMailTemplatesSection) {
+        ui.adminMailTemplatesSection.classList.add('hidden');
     }
     if (ui.adminUsageSection) {
         ui.adminUsageSection.classList.add('hidden');
     }
+    if (ui.adminMaintenanceSection) {
+        ui.adminMaintenanceSection.classList.add('hidden');
+    }
+    clearAdminMailTemplatesState();
     clearAdminUsageStatsState();
+    clearAdminMaintenanceState();
     setAdminYearMessage('');
     renderAdminUsers([]);
     renderBranches([]);
@@ -1748,6 +1975,11 @@ function showAuthCard(message = '') {
     dateRangeAvailableBranches = [];
     setFormMessage(ui.adminBranchMessage, '', '');
     setFormMessage(ui.adminDocumentMessage, '', '');
+    setFormMessage(ui.adminEmailMessage, '', '');
+    setFormMessage(ui.adminMailTemplateMessage, '', '');
+    setFormMessage(ui.adminUsageMessage, '', '');
+    setFormMessage(ui.adminMaintenanceMessage, '', '');
+    setFormMessage(ui.adminLoginNoticeMessage, '', '');
     adminIngresoMode = 'current';
     appViewMode = 'registro';
     loadedRecordUnknownDocuments = [];
@@ -1795,6 +2027,7 @@ function handleSessionExpired(message) {
     loadedComentarioOriginal = '';
     resetFacturaForm();
     closeDateRangeModal();
+    closeSearchMatchModal();
     updateRegistroActionButtons();
     showAuthCard(message || 'Sesion expirada. Vuelve a iniciar sesion.');
 }
@@ -3538,6 +3771,115 @@ function renderDateRangeResults(registros) {
 
         ui.dateRangeResultsBody.appendChild(row);
     });
+}
+
+function closeSearchMatchModal(options = {}) {
+    if (!ui || !ui.searchMatchModalOverlay) {
+        return;
+    }
+
+    const preserveResults = Boolean(options.preserveResults);
+    ui.searchMatchModalOverlay.classList.add('hidden');
+    setFormMessage(ui.searchMatchMessage, '', '');
+
+    if (!preserveResults) {
+        selectedSearchMatchIngreso = '';
+        searchMatchCandidates = [];
+        renderSearchMatchResults([]);
+    }
+}
+
+function renderSearchMatchResults(coincidencias) {
+    if (!ui || !ui.searchMatchResultsBody) {
+        return;
+    }
+
+    ui.searchMatchResultsBody.innerHTML = '';
+    if (!Array.isArray(coincidencias) || coincidencias.length === 0) {
+        ui.searchMatchResultsBody.innerHTML = '<tr><td colspan="4">Sin coincidencias para mostrar.</td></tr>';
+        return;
+    }
+
+    coincidencias.forEach((item, index) => {
+        const numIngreso = String(item?.numIngreso || '').trim();
+        const row = document.createElement('tr');
+        row.classList.add('search-match-row');
+        if (selectedSearchMatchIngreso === numIngreso) {
+            row.classList.add('is-selected');
+        }
+
+        const radioId = `searchMatchSel-${index}`;
+        row.innerHTML = `
+            <td><input type="radio" id="${radioId}" name="searchMatchSelection" value="${escapeHtml(numIngreso)}"></td>
+            <td><label for="${radioId}">${escapeHtml(numIngreso || '-')}</label></td>
+            <td>${escapeHtml(item?.rol || '')}</td>
+            <td>${escapeHtml(item?.nombre || '')}</td>
+        `;
+
+        const radio = row.querySelector(`input[name="searchMatchSelection"]`);
+        const handleRowSelection = () => {
+            selectedSearchMatchIngreso = numIngreso;
+            renderSearchMatchResults(searchMatchCandidates);
+        };
+
+        if (radio) {
+            radio.checked = selectedSearchMatchIngreso === numIngreso;
+            radio.addEventListener('change', handleRowSelection);
+        }
+
+        row.addEventListener('click', () => {
+            if (!radio) {
+                return;
+            }
+            radio.checked = true;
+            handleRowSelection();
+        });
+
+        ui.searchMatchResultsBody.appendChild(row);
+    });
+}
+
+function openSearchMatchModal(coincidencias, message = '') {
+    if (!ui || !ui.searchMatchModalOverlay) {
+        return false;
+    }
+
+    const normalizedMatches = Array.isArray(coincidencias)
+        ? coincidencias.filter((item) => String(item?.numIngreso || '').trim().length > 0)
+        : [];
+    if (normalizedMatches.length === 0) {
+        return false;
+    }
+
+    searchMatchCandidates = normalizedMatches;
+    selectedSearchMatchIngreso = String(normalizedMatches[0].numIngreso || '').trim();
+    renderSearchMatchResults(searchMatchCandidates);
+    setFormMessage(
+        ui.searchMatchMessage,
+        normalizeText(message) || `Se encontraron ${normalizedMatches.length} coincidencias. Selecciona el registro correcto.`,
+        ''
+    );
+    ui.searchMatchModalOverlay.classList.remove('hidden');
+    return true;
+}
+
+async function handleSearchMatchAcceptSelection() {
+    if (!selectedSearchMatchIngreso) {
+        setFormMessage(ui.searchMatchMessage, 'Selecciona un registro para cargar.', 'error');
+        return;
+    }
+
+    if (loadedIngresoOriginal && hasPendingLoadedRegistroChanges()) {
+        showPendingModifyRequiredWarningPopup();
+        return;
+    }
+
+    try {
+        await loadRegistroByIngreso(selectedSearchMatchIngreso, 'seleccion de coincidencias');
+        closeSearchMatchModal();
+    } catch (error) {
+        setFormMessage(ui.searchMatchMessage, error.message, 'error');
+    }
 }
 
 async function loadRegistroByIngreso(numIngreso, sourceLabel = 'base de datos') {
@@ -5768,7 +6110,8 @@ function normalizeMonthlyUtmInput(value) {
     return parsed.toFixed(2);
 }
 
-function showMonthlyUtmCaptureCard(user, status, message = '') {
+function showMonthlyUtmCaptureCard(user, status, message = '', options = {}) {
+    const manualEdit = Boolean(options?.manualEdit);
     pendingMonthlyUtmStatus = status || null;
     if (ui.appTopPanels) {
         ui.appTopPanels.classList.add('hidden');
@@ -5784,7 +6127,11 @@ function showMonthlyUtmCaptureCard(user, status, message = '') {
 
     const userName = user?.nombre || user?.username || 'secretaria';
     if (ui.utmCaptureIntro) {
-        ui.utmCaptureIntro.textContent = `Usuario ${userName}: debes registrar y confirmar la UTM del periodo para continuar.`;
+        if (manualEdit) {
+            ui.utmCaptureIntro.textContent = `Usuario ${userName}: puedes editar y confirmar la UTM del periodo cuando lo necesites.`;
+        } else {
+            ui.utmCaptureIntro.textContent = `Usuario ${userName}: debes registrar y confirmar la UTM del periodo para continuar.`;
+        }
     }
     if (ui.utmCapturePeriod) {
         ui.utmCapturePeriod.textContent = `Periodo: ${formatMonthlyUtmPeriodLabel(status)}`;
@@ -5800,7 +6147,7 @@ function showMonthlyUtmCaptureCard(user, status, message = '') {
         ui.utmValue.value = prefilledValue ? formatInvoiceAmountForInput(prefilledValue) : '';
     }
     if (ui.utmConfirmValue) {
-        ui.utmConfirmValue.value = '';
+        ui.utmConfirmValue.value = manualEdit && prefilledValue ? formatInvoiceAmountForInput(prefilledValue) : '';
     }
     if (ui.utmCaptureSource) {
         if (suggestedValue) {
@@ -5950,7 +6297,8 @@ function setAdminManagementView(view) {
         view === 'documents' ||
         view === 'email' ||
         view === 'mailTemplates' ||
-        view === 'usage'
+        view === 'usage' ||
+        view === 'maintenance'
             ? view
             : 'registro';
     if (!canManageAdminCatalogs(currentUser)) {
@@ -5963,6 +6311,9 @@ function setAdminManagementView(view) {
         normalizedView = 'registro';
     }
     if (normalizedView === 'usage' && !isSuperUser(currentUser)) {
+        normalizedView = 'registro';
+    }
+    if (normalizedView === 'maintenance' && !isSuperUser(currentUser)) {
         normalizedView = 'registro';
     }
     if (ui.adminUsersSection) {
@@ -5983,6 +6334,9 @@ function setAdminManagementView(view) {
     if (ui.adminUsageSection) {
         ui.adminUsageSection.classList.toggle('hidden', normalizedView !== 'usage');
     }
+    if (ui.adminMaintenanceSection) {
+        ui.adminMaintenanceSection.classList.toggle('hidden', normalizedView !== 'maintenance');
+    }
     if (normalizedView !== 'documents') {
         exitDocumentEditMode();
         setFormMessage(ui.adminDocumentMessage, '', '');
@@ -5995,6 +6349,10 @@ function setAdminManagementView(view) {
     }
     if (normalizedView !== 'usage') {
         setFormMessage(ui.adminUsageMessage, '', '');
+    }
+    if (normalizedView !== 'maintenance') {
+        setFormMessage(ui.adminMaintenanceMessage, '', '');
+        setFormMessage(ui.adminLoginNoticeMessage, '', '');
     }
 
     appViewMode = normalizedView === 'registro' ? 'registro' : `admin-${normalizedView}`;
@@ -6055,6 +6413,15 @@ function setAdminUsageVisibility(isVisible) {
     setAdminManagementView(isVisible ? 'usage' : 'registro');
 }
 
+function setAdminMaintenanceVisibility(isVisible) {
+    if (!ui || !ui.adminMaintenanceSection || !ui.adminToggleMaintenanceBtn) {
+        return;
+    }
+
+    ui.adminToggleMaintenanceBtn.textContent = 'MODO MANTENCION';
+    setAdminManagementView(isVisible ? 'maintenance' : 'registro');
+}
+
 function handleAdminToggleUsers() {
     if (!canManageAdminCatalogs(currentUser)) {
         return;
@@ -6112,6 +6479,272 @@ async function handleAdminToggleUsage() {
     await loadAdminUsageStats();
 }
 
+async function handleAdminToggleMaintenance() {
+    if (!isSuperUser(currentUser)) {
+        return;
+    }
+
+    setAdminMaintenanceVisibility(true);
+    await loadAdminMaintenanceStatus();
+}
+
+function clearAdminMaintenanceState() {
+    adminMaintenanceStatusLoaded = null;
+    adminMaintenanceUpdateInProgress = false;
+    adminLoginRouteNoticeStatusLoaded = null;
+    adminLoginRouteNoticeUpdateInProgress = false;
+    if (!ui) {
+        return;
+    }
+
+    if (ui.adminMaintenanceState) {
+        ui.adminMaintenanceState.textContent = '-';
+    }
+    if (ui.adminMaintenanceUpdatedAt) {
+        ui.adminMaintenanceUpdatedAt.textContent = '-';
+    }
+    if (ui.adminMaintenanceUpdatedBy) {
+        ui.adminMaintenanceUpdatedBy.textContent = '-';
+    }
+    if (ui.adminLoginNoticeState) {
+        ui.adminLoginNoticeState.textContent = '-';
+    }
+    if (ui.adminLoginNoticeUrl) {
+        ui.adminLoginNoticeUrl.value = getDefaultLoginNoticeUrlByRuntime();
+    }
+    if (ui.adminLoginNoticeExpiresAt) {
+        ui.adminLoginNoticeExpiresAt.textContent = '-';
+    }
+    if (ui.adminLoginNoticeUpdatedBy) {
+        ui.adminLoginNoticeUpdatedBy.textContent = '-';
+    }
+    setAdminLoginRouteNoticeButtonsBusy(false);
+    setAdminMaintenanceButtonsBusy(false);
+}
+
+function applyAdminMaintenanceStatus(status) {
+    adminMaintenanceStatusLoaded = status && typeof status === 'object' ? status : null;
+    if (!ui) {
+        return;
+    }
+
+    const enabled = Boolean(adminMaintenanceStatusLoaded?.enabled);
+    if (ui.adminMaintenanceState) {
+        ui.adminMaintenanceState.textContent = enabled ? 'ACTIVO' : 'INACTIVO';
+    }
+    if (ui.adminMaintenanceUpdatedAt) {
+        ui.adminMaintenanceUpdatedAt.textContent = adminMaintenanceStatusLoaded?.updatedAt
+            ? formatDateTime(adminMaintenanceStatusLoaded.updatedAt)
+            : '-';
+    }
+    if (ui.adminMaintenanceUpdatedBy) {
+        ui.adminMaintenanceUpdatedBy.textContent = String(adminMaintenanceStatusLoaded?.updatedBy || '-').trim() || '-';
+    }
+    setAdminMaintenanceButtonsBusy(false);
+}
+
+function normalizeAdminLoginNoticeUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+        return '';
+    }
+    if (/^https?:\/\//i.test(raw)) {
+        return raw;
+    }
+    if (/^localhost(?:\:\d+)?\//i.test(raw) || /^127\.0\.0\.1(?:\:\d+)?\//i.test(raw)) {
+        return `http://${raw}`;
+    }
+    if (/^[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw)) {
+        return `https://${raw}`;
+    }
+    if (raw.startsWith('/')) {
+        return raw;
+    }
+    return `/${raw.replace(/^\/+/, '')}`;
+}
+
+function getDefaultLoginNoticeUrlByRuntime() {
+    const host = String(window.location.hostname || '')
+        .trim()
+        .toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') {
+        return 'http://localhost/geo_rural/registro/login/registro.html';
+    }
+    return 'https://my-registro.cl/registro/login/registro.html';
+}
+
+function applyAdminLoginRouteNoticeStatus(status) {
+    adminLoginRouteNoticeStatusLoaded = status && typeof status === 'object' ? status : null;
+    if (!ui) {
+        return;
+    }
+
+    const isEnabled = Boolean(adminLoginRouteNoticeStatusLoaded?.enabled);
+    const isActive = Boolean(adminLoginRouteNoticeStatusLoaded?.active);
+    const expiresAt = adminLoginRouteNoticeStatusLoaded?.expiresAt;
+    const stateText = isActive ? 'ACTIVO' : isEnabled ? 'EXPIRADO' : 'INACTIVO';
+
+    if (ui.adminLoginNoticeState) {
+        ui.adminLoginNoticeState.textContent = stateText;
+    }
+    if (ui.adminLoginNoticeUrl) {
+        const safeUrl = normalizeAdminLoginNoticeUrl(adminLoginRouteNoticeStatusLoaded?.url) || getDefaultLoginNoticeUrlByRuntime();
+        ui.adminLoginNoticeUrl.value = safeUrl;
+    }
+    if (ui.adminLoginNoticeExpiresAt) {
+        ui.adminLoginNoticeExpiresAt.textContent = expiresAt ? formatDateTime(expiresAt) : '-';
+    }
+    if (ui.adminLoginNoticeUpdatedBy) {
+        ui.adminLoginNoticeUpdatedBy.textContent = String(adminLoginRouteNoticeStatusLoaded?.updatedBy || '-').trim() || '-';
+    }
+    setAdminLoginRouteNoticeButtonsBusy(false);
+}
+
+function setAdminMaintenanceButtonsBusy(isBusy) {
+    if (!ui) {
+        return;
+    }
+
+    const isEnabled = Boolean(adminMaintenanceStatusLoaded?.enabled);
+    const disabled = Boolean(isBusy) || adminMaintenanceUpdateInProgress;
+
+    if (ui.adminMaintenanceRefreshBtn) {
+        ui.adminMaintenanceRefreshBtn.disabled = disabled;
+    }
+    if (ui.adminMaintenanceEnableBtn) {
+        ui.adminMaintenanceEnableBtn.disabled = disabled || isEnabled;
+    }
+    if (ui.adminMaintenanceDisableBtn) {
+        ui.adminMaintenanceDisableBtn.disabled = disabled || !isEnabled;
+    }
+}
+
+function setAdminLoginRouteNoticeButtonsBusy(isBusy) {
+    if (!ui) {
+        return;
+    }
+
+    const isEnabled = Boolean(adminLoginRouteNoticeStatusLoaded?.enabled);
+    const isActive = Boolean(adminLoginRouteNoticeStatusLoaded?.active);
+    const disabled = Boolean(isBusy) || adminLoginRouteNoticeUpdateInProgress;
+
+    if (ui.adminLoginNoticeUrl) {
+        ui.adminLoginNoticeUrl.disabled = disabled;
+    }
+    if (ui.adminLoginNoticeRefreshBtn) {
+        ui.adminLoginNoticeRefreshBtn.disabled = disabled;
+    }
+    if (ui.adminLoginNoticeEnableBtn) {
+        ui.adminLoginNoticeEnableBtn.disabled = disabled || isActive;
+    }
+    if (ui.adminLoginNoticeDisableBtn) {
+        ui.adminLoginNoticeDisableBtn.disabled = disabled || !isEnabled;
+    }
+}
+
+async function loadAdminMaintenanceStatus(options = {}) {
+    if (!isSuperUser(currentUser)) {
+        return;
+    }
+
+    const silent = options.silent === true;
+    setAdminMaintenanceButtonsBusy(true);
+    setAdminLoginRouteNoticeButtonsBusy(true);
+    if (!silent) {
+        setFormMessage(ui.adminMaintenanceMessage, 'Consultando estado de mantencion...', '');
+    }
+
+    try {
+        const data = await apiRequest('/system/mantenimiento');
+        applyAdminMaintenanceStatus(data?.maintenance || null);
+        applyAdminLoginRouteNoticeStatus(data?.loginRouteNotice || null);
+        if (!silent) {
+            setFormMessage(ui.adminMaintenanceMessage, 'Estado actualizado.', 'success');
+        }
+    } catch (error) {
+        if (!silent) {
+            setFormMessage(ui.adminMaintenanceMessage, error.message || 'No fue posible consultar el estado.', 'error');
+        }
+        setAdminMaintenanceButtonsBusy(false);
+        setAdminLoginRouteNoticeButtonsBusy(false);
+    }
+}
+
+async function updateAdminMaintenanceMode(enabled) {
+    if (!isSuperUser(currentUser) || adminMaintenanceUpdateInProgress) {
+        return;
+    }
+
+    adminMaintenanceUpdateInProgress = true;
+    setAdminMaintenanceButtonsBusy(true);
+    setFormMessage(
+        ui.adminMaintenanceMessage,
+        enabled ? 'Activando modo mantencion...' : 'Volviendo a modo normal...',
+        ''
+    );
+
+    try {
+        const data = await apiRequest('/system/mantenimiento', {
+            method: 'PUT',
+            body: JSON.stringify({ enabled: Boolean(enabled) })
+        });
+        applyAdminMaintenanceStatus(data?.maintenance || null);
+        applyAdminLoginRouteNoticeStatus(data?.loginRouteNotice || null);
+        setFormMessage(
+            ui.adminMaintenanceMessage,
+            data?.message || (enabled ? 'Modo mantencion activado.' : 'Modo mantencion desactivado.'),
+            'success'
+        );
+    } catch (error) {
+        setFormMessage(ui.adminMaintenanceMessage, error.message || 'No fue posible actualizar el estado.', 'error');
+    } finally {
+        adminMaintenanceUpdateInProgress = false;
+        setAdminMaintenanceButtonsBusy(false);
+    }
+}
+
+async function updateAdminLoginRouteNotice(enabled) {
+    if (!isSuperUser(currentUser) || adminLoginRouteNoticeUpdateInProgress) {
+        return;
+    }
+
+    const requestedUrl = normalizeAdminLoginNoticeUrl(ui?.adminLoginNoticeUrl?.value || '');
+    if (enabled && !requestedUrl) {
+        setFormMessage(ui.adminLoginNoticeMessage, 'Ingresa la URL del login para activar el aviso.', 'error');
+        return;
+    }
+
+    adminLoginRouteNoticeUpdateInProgress = true;
+    setAdminLoginRouteNoticeButtonsBusy(true);
+    setFormMessage(
+        ui.adminLoginNoticeMessage,
+        enabled ? 'Activando aviso de nueva ruta por 15 dias...' : 'Desactivando aviso de nueva ruta...',
+        ''
+    );
+
+    try {
+        const data = await apiRequest('/system/login-route-notice', {
+            method: 'PUT',
+            body: JSON.stringify({
+                enabled: Boolean(enabled),
+                url: requestedUrl
+            })
+        });
+        applyAdminMaintenanceStatus(data?.maintenance || null);
+        applyAdminLoginRouteNoticeStatus(data?.loginRouteNotice || null);
+        setFormMessage(
+            ui.adminLoginNoticeMessage,
+            data?.message || (enabled ? 'Aviso activado por 15 dias.' : 'Aviso desactivado.'),
+            'success'
+        );
+    } catch (error) {
+        setFormMessage(ui.adminLoginNoticeMessage, error.message || 'No fue posible actualizar el aviso.', 'error');
+    } finally {
+        adminLoginRouteNoticeUpdateInProgress = false;
+        setAdminLoginRouteNoticeButtonsBusy(false);
+    }
+}
+
 async function handleAdminYearModeClick(mode) {
     if (!canUseHistoricalIngresoMode(currentUser)) {
         return;
@@ -6121,7 +6754,9 @@ async function handleAdminYearModeClick(mode) {
     setAdminBranchesVisibility(false);
     setAdminDocumentsVisibility(false);
     setAdminEmailVisibility(false);
+    setAdminMailTemplatesVisibility(false);
     setAdminUsageVisibility(false);
+    setAdminMaintenanceVisibility(false);
     await setAdminIngresoMode(mode);
 }
 
@@ -8362,6 +8997,8 @@ async function handleBuscar() {
         return;
     }
 
+    closeSearchMatchModal();
+
     const numIngresoInput = document.getElementById('numIngreso').value.trim();
     const nombreInput = document.getElementById('nombre').value.trim();
     const rutInput = document.getElementById('rut').value.trim();
@@ -8395,25 +9032,10 @@ async function handleBuscar() {
     try {
         const match = await apiRequest(`/registros/buscar?${query.toString()}`);
         if (Array.isArray(match.coincidencias) && match.coincidencias.length > 1) {
-            const availableIngresos = match.coincidencias.map((item) => item.numIngreso).filter(Boolean);
-            const preview = availableIngresos.slice(0, 10).join(', ');
-            const selectedIngreso = window.prompt(
-                `${match.message || 'Hay multiples coincidencias.'}\nIngresa NRO INGRESO exacto.\nOpciones: ${preview}`,
-                availableIngresos[0] || ''
-            );
-
-            if (selectedIngreso === null) {
-                setFormMessage(ui.formMessage, match.message || 'Busqueda ambigua. Seleccion no realizada.', 'error');
-                return;
+            const wasModalOpened = openSearchMatchModal(match.coincidencias, match.message);
+            if (!wasModalOpened) {
+                setFormMessage(ui.formMessage, 'No fue posible mostrar las coincidencias de busqueda.', 'error');
             }
-
-            const normalizedIngreso = String(selectedIngreso || '').trim();
-            if (!normalizedIngreso || !availableIngresos.includes(normalizedIngreso)) {
-                setFormMessage(ui.formMessage, 'NRO INGRESO invalido para la seleccion de coincidencias.', 'error');
-                return;
-            }
-
-            await loadRegistroByIngreso(normalizedIngreso, 'base de datos');
             return;
         }
 
@@ -8745,7 +9367,7 @@ function closeHistoryEditModal() {
 
 function openHistoryEditModal(historyItem) {
     if (!canEditHistoryComments(currentUser)) {
-        setFormMessage(ui?.formMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial.', 'error');
+        setFormMessage(ui?.formMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial de progreso.', 'error');
         return;
     }
 
@@ -8786,7 +9408,7 @@ async function handleHistoryEditSubmit(event) {
     event.preventDefault();
 
     if (!canEditHistoryComments(currentUser)) {
-        setFormMessage(ui?.historyEditMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial.', 'error');
+        setFormMessage(ui?.historyEditMessage, 'Solo ADMIN o SUPER pueden editar comentarios del historial de progreso.', 'error');
         return;
     }
 
@@ -8821,12 +9443,12 @@ async function handleHistoryEditSubmit(event) {
         try {
             await loadHistoryForIngreso(targetIngreso);
             closeHistoryEditModal();
-            setFormMessage(ui?.formMessage, 'Comentario de historial actualizado correctamente.', 'success');
+            setFormMessage(ui?.formMessage, 'Comentario de historial de progreso actualizado correctamente.', 'success');
         } catch (refreshError) {
             closeHistoryEditModal();
             setFormMessage(
                 ui?.formMessage,
-                `Comentario actualizado, pero no se pudo recargar el historial: ${refreshError.message}`,
+                `Comentario actualizado, pero no se pudo recargar el historial de progreso: ${refreshError.message}`,
                 'error'
             );
         }
@@ -8849,7 +9471,7 @@ function renderHistory(historial) {
 
     if (!Array.isArray(historial) || historial.length === 0) {
         const emptyCols = canManageHistory ? 4 : 3;
-        ui.historialBody.innerHTML = `<tr><td colspan="${emptyCols}">Sin historial para mostrar.</td></tr>`;
+        ui.historialBody.innerHTML = `<tr><td colspan="${emptyCols}">Sin historial de progreso para mostrar.</td></tr>`;
         return;
     }
 
@@ -9111,12 +9733,12 @@ function resolveApiBase() {
         return metaValue;
     }
 
-    const host = window.location.hostname;
-    const port = window.location.port;
-    const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+    const host = String(window.location.hostname || '').trim().toLowerCase();
+    const port = String(window.location.port || '').trim();
+    const protocol = String(window.location.protocol || '').trim().toLowerCase();
 
-    if (isLocalHost && port !== '3000') {
-        return 'http://127.0.0.1:3000/api';
+    if (host && !host.includes(':') && port !== '3000' && protocol !== 'https:') {
+        return `http://${host}:3000/api`;
     }
 
     // En internet (Nginx), la API debe resolverse por la misma origin en /api.
@@ -9134,18 +9756,23 @@ function resolveApiFallbackBases(primaryBase) {
         candidates.push(normalized);
     };
 
-    const host = window.location.hostname;
-    const port = window.location.port;
+    const host = String(window.location.hostname || '').trim().toLowerCase();
+    const port = String(window.location.port || '').trim();
+    const protocol = String(window.location.protocol || '').trim().toLowerCase();
     const isLocalHost = host === 'localhost' || host === '127.0.0.1';
 
     if (isLocalHost) {
-        appendCandidate('http://127.0.0.1:3000/api');
-        appendCandidate('http://localhost:3000/api');
+        appendCandidate(`http://${host}:3000/api`);
+        if (host === 'localhost') {
+            appendCandidate('http://127.0.0.1:3000/api');
+        } else if (host === '127.0.0.1') {
+            appendCandidate('http://localhost:3000/api');
+        }
     }
 
     appendCandidate('/api');
 
-    if (!isLocalHost && port !== '3000') {
+    if (!isLocalHost && host && !host.includes(':') && port !== '3000' && protocol !== 'https:') {
         appendCandidate(`http://${host}:3000/api`);
     }
     return candidates;

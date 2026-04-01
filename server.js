@@ -1,15 +1,84 @@
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
+const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
 const { PDFDocument: PDFLibDocument, StandardFonts, rgb } = require('pdf-lib');
 
-require('dotenv').config();
+function normalizeEnvironmentName(value) {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase();
+
+    if (!normalized) {
+        return 'development';
+    }
+
+    if (normalized === 'prod') {
+        return 'production';
+    }
+    if (normalized === 'dev') {
+        return 'development';
+    }
+
+    return normalized.replace(/[^a-z0-9_-]/g, '') || 'development';
+}
+
+function readEnvironmentArg(argv = process.argv.slice(2)) {
+    for (const arg of Array.isArray(argv) ? argv : []) {
+        const item = String(arg || '').trim();
+        if (!item) {
+            continue;
+        }
+
+        if (item.startsWith('--env=')) {
+            return item.slice('--env='.length);
+        }
+
+        if (item.startsWith('--app-env=')) {
+            return item.slice('--app-env='.length);
+        }
+    }
+
+    return '';
+}
+
+function loadEnvironmentConfig() {
+    const cliEnvValue = readEnvironmentArg();
+    const appEnv = normalizeEnvironmentName(cliEnvValue || process.env.APP_ENV || process.env.NODE_ENV || 'development');
+    const candidateFiles = ['.env', `.env.${appEnv}`];
+    const loadedFiles = [];
+
+    for (const fileName of candidateFiles) {
+        const filePath = path.resolve(process.cwd(), fileName);
+        if (!fs.existsSync(filePath)) {
+            continue;
+        }
+
+        const result = dotenv.config({ path: filePath, override: true });
+        if (!result.error) {
+            loadedFiles.push(filePath);
+        }
+    }
+
+    process.env.APP_ENV = appEnv;
+    process.env.NODE_ENV = appEnv === 'production' ? 'production' : 'development';
+
+    return {
+        appEnv,
+        loadedFiles
+    };
+}
+
+const ENV_CONFIG = loadEnvironmentConfig();
+const APP_ENV = ENV_CONFIG.appEnv;
+const IS_PRODUCTION_ENV = APP_ENV === 'production';
 
 const DB_HOST = process.env.DB_HOST || '127.0.0.1';
 const DB_PORT = Number(process.env.DB_PORT || 3306);
@@ -72,6 +141,22 @@ const SMTP_FROM_NAME = normalizeText(process.env.SMTP_FROM_NAME || 'Geo Rural');
 const MAIL_TEMPLATE_MAX_LENGTH = parsePositiveInt(process.env.MAIL_TEMPLATE_MAX_LENGTH, 400000);
 const MAIL_TEMPLATE_KEYS = Object.freeze(['cotizacionHtml', 'facturaSingleHtml', 'facturaPendingHtml']);
 const SMTP_CONFIG_SINGLETON_ID = 1;
+const SYSTEM_CONFIG_SINGLETON_ID = 1;
+const LOGIN_ROUTE_NOTICE_DURATION_DAYS = parsePositiveInt(process.env.LOGIN_ROUTE_NOTICE_DURATION_DAYS, 15);
+const LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH = parsePositiveInt(process.env.LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH, 255);
+const LOGIN_ROUTE_NOTICE_DEV_URL = normalizeText(
+    process.env.LOGIN_ROUTE_NOTICE_DEV_URL || 'http://localhost/geo_rural/registro/login/registro.html'
+);
+const LOGIN_ROUTE_NOTICE_PROD_URL = normalizeText(
+    process.env.LOGIN_ROUTE_NOTICE_PROD_URL || 'https://my-registro.cl/registro/login/registro.html'
+);
+const LOGIN_ROUTE_NOTICE_DEFAULT_URL = normalizeText(
+    process.env.LOGIN_ROUTE_NOTICE_DEFAULT_URL || (IS_PRODUCTION_ENV ? LOGIN_ROUTE_NOTICE_PROD_URL : LOGIN_ROUTE_NOTICE_DEV_URL)
+);
+const LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE = normalizeText(
+    process.env.LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE ||
+        'Pedimos disculpas, pero por cambios de seguridad y para habilitar la vista del cliente se ha modificado la ruta de acceso a las cuentas de usuarios.'
+);
 const SMTP_ENV_CONFIG = Object.freeze({
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -130,7 +215,20 @@ const DEFAULT_CORS_ORIGINS = [APP_URL, `http://localhost:${PORT}`, `http://127.0
     .map((item) => normalizeText(item))
     .filter((item) => item.length > 0);
 const ALLOWED_ORIGINS = parseCsv(process.env.CORS_ORIGINS, DEFAULT_CORS_ORIGINS);
-const FRONTEND_FILES = ['index.html', 'script.js', 'styles.css', 'logo.png', 'logo.svg'];
+const FRONTEND_FILES = [
+    'index.html',
+    'script.js',
+    'styles.css',
+    'seguimiento.html',
+    'seguimiento.js',
+    'seguimiento.css',
+    'mantenimiento.html',
+    'mantenimiento.css',
+    'mantenimiento.js',
+    'registro/login/registro.html',
+    'logo.png',
+    'logo.svg'
+];
 let runtimeBootstrapAdmin = null;
 const loginAttempts = new Map();
 let lastSessionCleanupAt = 0;
@@ -141,9 +239,77 @@ let utmSourceCache = {
 };
 let smtpTransporter = null;
 let smtpTransporterKey = '';
+let maintenanceModeCache = {
+    enabled: false,
+    updatedAt: '',
+    updatedBy: ''
+};
+let loginRouteNoticeCache = {
+    enabled: false,
+    url: LOGIN_ROUTE_NOTICE_DEFAULT_URL,
+    message: LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE,
+    startsAt: '',
+    expiresAt: '',
+    updatedAt: '',
+    updatedBy: ''
+};
 
 const app = express();
 let pool;
+const MAINTENANCE_ALLOWED_PAGE_PATHS = new Set([
+    '/mantenimiento',
+    '/mantenimiento/',
+    '/mantenimiento.html',
+    '/mantenimiento.css',
+    '/mantenimiento.js',
+    '/logo.png',
+    '/logo.svg',
+    '/favicon.ico'
+]);
+const MAINTENANCE_ALLOWED_API_PATHS = new Set([
+    '/api/health',
+    '/api/auth/login',
+    '/api/auth/logout',
+    '/api/auth/me',
+    '/api/public/system-status',
+    '/api/system/mantenimiento'
+]);
+const PUBLIC_FRONTEND_PATHS = new Set([
+    '/',
+    '/index.html',
+    '/seguimiento',
+    '/seguimiento.html',
+    '/mantenimiento',
+    '/mantenimiento/',
+    '/mantenimiento.html',
+    '/mantenimiento.css',
+    '/mantenimiento.js',
+    '/registro',
+    '/registro/',
+    '/registro/login',
+    '/registro/login/',
+    '/registro/login/registro.html',
+    '/script.js',
+    '/styles.css',
+    '/seguimiento.js',
+    '/seguimiento.css',
+    '/logo.png',
+    '/logo.svg',
+    '/favicon.ico'
+]);
+const KNOWN_FRONTEND_PATHS = new Set(
+    [
+        '/',
+        '/index.html',
+        '/seguimiento',
+        '/registro',
+        '/registro/',
+        '/registro/login',
+        '/registro/login/',
+        '/mantenimiento',
+        '/mantenimiento/'
+    ].concat(FRONTEND_FILES.map((fileName) => `/${fileName}`))
+);
 
 app.use(
     cors({
@@ -183,6 +349,27 @@ function parseBooleanFlag(value, fallback = false) {
     }
 
     return Boolean(fallback);
+}
+
+function parseMaintenanceModeInput(value) {
+    if (value === true) {
+        return true;
+    }
+    if (value === false) {
+        return false;
+    }
+
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase();
+    if (['1', 'true', 'yes', 'on', 'si', 's'].includes(normalized)) {
+        return true;
+    }
+    if (['0', 'false', 'no', 'off', 'n'].includes(normalized)) {
+        return false;
+    }
+
+    return null;
 }
 
 function parseSameSiteValue(value, fallback = 'Lax') {
@@ -279,8 +466,513 @@ function normalizeText(value) {
     return String(value || '').trim();
 }
 
+function escapeHtmlText(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function resolveErrorPageTitle(statusCode) {
+    const safeCode = Number.isInteger(statusCode) ? statusCode : 500;
+    if (safeCode === 401) {
+        return 'ACCESO NO AUTORIZADO';
+    }
+    if (safeCode === 403) {
+        return 'SOLO PERSONAL AUTORIZADO';
+    }
+    if (safeCode === 404) {
+        return 'RUTA EXTRAVIADA';
+    }
+    if (safeCode === 503) {
+        return 'SERVICIO TEMPORALMENTE NO DISPONIBLE';
+    }
+    return normalizeText(http.STATUS_CODES[safeCode]).toUpperCase() || `ERROR ${safeCode}`;
+}
+
+function resolveErrorPageDetail(statusCode, message = '') {
+    const customMessage = normalizeText(message);
+    if (customMessage) {
+        return customMessage;
+    }
+
+    const safeCode = Number.isInteger(statusCode) ? statusCode : 500;
+    if (safeCode === 401) {
+        return 'Debes iniciar sesion para continuar.';
+    }
+    if (safeCode === 403) {
+        return 'Esta zona es exclusiva para personal autorizado de Geo Rural.';
+    }
+    if (safeCode === 404) {
+        return 'La ruta solicitada no existe o fue movida.';
+    }
+    if (safeCode === 503) {
+        return 'El sistema no esta disponible por el momento. Intenta nuevamente en unos minutos.';
+    }
+    return 'No fue posible completar la solicitud.';
+}
+
+function buildErrorPageHtml({ statusCode = 500, message = '', requestPath = '' } = {}) {
+    const safeCode = Number.isInteger(statusCode) && statusCode >= 100 ? statusCode : 500;
+    const title = resolveErrorPageTitle(safeCode);
+    const detail = resolveErrorPageDetail(safeCode, message);
+    const pathText = normalizeText(requestPath);
+    const pathHtml = pathText
+        ? `<p class="error-path">Ruta: <code>${escapeHtmlText(pathText)}</code></p>`
+        : '';
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${escapeHtmlText(String(safeCode))} | Geo Rural</title>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            background: radial-gradient(circle at 15% 10%, #f7fbff 0%, #d7e3f7 45%, #b8cbe8 100%);
+            color: #17345f;
+            display: grid;
+            place-items: center;
+            padding: 18px;
+        }
+        .error-card {
+            width: min(980px, 100%);
+            border: 1px solid #91a8cc;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.78);
+            box-shadow: 0 18px 44px rgba(20, 44, 86, 0.18);
+            padding: 24px;
+            text-align: center;
+            backdrop-filter: blur(2px);
+        }
+        .error-code {
+            margin: 0;
+            font-size: clamp(72px, 17vw, 158px);
+            line-height: 0.9;
+            font-weight: 800;
+            letter-spacing: 1px;
+            color: #0f2e59;
+            text-shadow: 0 2px 0 #ffffff;
+        }
+        .error-title {
+            margin: 12px 0 6px;
+            font-size: clamp(20px, 2.8vw, 32px);
+            font-weight: 800;
+            color: #1a3d72;
+        }
+        .error-detail {
+            margin: 0;
+            font-size: clamp(15px, 1.9vw, 19px);
+            color: #284d7c;
+            font-weight: 600;
+        }
+        .error-path {
+            margin: 12px 0 0;
+            color: #335880;
+            font-size: 13px;
+        }
+        .error-path code {
+            font-size: 12px;
+            background: rgba(210, 223, 244, 0.7);
+            border: 1px solid #9cb3d7;
+            border-radius: 6px;
+            padding: 2px 6px;
+            color: #1c3e6f;
+        }
+        .scene {
+            position: relative;
+            margin: 18px auto 10px;
+            width: min(760px, 100%);
+            min-height: 250px;
+            border-radius: 12px;
+            border: 1px solid #93aacd;
+            background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(206, 221, 244, 0.96));
+            overflow: hidden;
+        }
+        .scene::before {
+            content: '';
+            position: absolute;
+            inset: auto 0 0;
+            height: 74px;
+            background: linear-gradient(180deg, rgba(132, 159, 199, 0.28), rgba(103, 129, 169, 0.55));
+        }
+        .door-zone {
+            position: absolute;
+            right: 10%;
+            bottom: 58px;
+            width: 220px;
+            height: 182px;
+            border-radius: 10px 10px 0 0;
+            background: linear-gradient(180deg, #35557f 0%, #203c63 100%);
+            box-shadow: 0 20px 30px rgba(24, 44, 76, 0.25);
+        }
+        .door {
+            position: absolute;
+            left: 50%;
+            transform-origin: left center;
+            transform: translateX(-50%);
+            bottom: 0;
+            width: 132px;
+            height: 150px;
+            border: 2px solid #19365e;
+            border-radius: 8px 8px 0 0;
+            background: linear-gradient(180deg, #2a4f7f 0%, #1b365d 100%);
+            animation: door-open 2.6s ease-in-out infinite;
+        }
+        .door::after {
+            content: '';
+            position: absolute;
+            right: 11px;
+            top: 76px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #d6e5f9;
+            box-shadow: 0 0 0 2px rgba(23, 52, 95, 0.45);
+        }
+        .door-glow {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%);
+            width: 94px;
+            height: 134px;
+            border-radius: 8px 8px 0 0;
+            background: radial-gradient(circle at center, rgba(194, 217, 250, 0.82), rgba(150, 180, 223, 0.2));
+            animation: glow-pulse 2.6s ease-in-out infinite;
+            pointer-events: none;
+        }
+        .door-sign {
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 198px;
+            border: 1px solid #cda754;
+            border-radius: 7px;
+            padding: 7px 10px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.7px;
+            color: #583f08;
+            background: linear-gradient(180deg, #ffe59d 0%, #f7cc63 100%);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            text-transform: uppercase;
+        }
+        .person {
+            position: absolute;
+            left: clamp(30px, 20vw, 200px);
+            bottom: 56px;
+            width: 72px;
+            height: 130px;
+            animation: person-walk 2.6s ease-in-out infinite;
+        }
+        .person-head {
+            position: absolute;
+            top: 0;
+            left: 25px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #112d50;
+        }
+        .person-body {
+            position: absolute;
+            top: 20px;
+            left: 30px;
+            width: 12px;
+            height: 54px;
+            border-radius: 10px;
+            background: #16385f;
+        }
+        .person-arm {
+            position: absolute;
+            top: 28px;
+            width: 30px;
+            height: 6px;
+            border-radius: 6px;
+            background: #16385f;
+            transform-origin: left center;
+        }
+        .person-arm.left {
+            left: 8px;
+            transform: rotate(24deg);
+            animation: arm-left 0.9s ease-in-out infinite;
+        }
+        .person-arm.right {
+            left: 34px;
+            transform: rotate(-22deg);
+            animation: arm-right 0.9s ease-in-out infinite;
+        }
+        .person-leg {
+            position: absolute;
+            bottom: 0;
+            width: 10px;
+            height: 56px;
+            border-radius: 9px;
+            background: #102a48;
+            transform-origin: top center;
+        }
+        .person-leg.left {
+            left: 22px;
+            animation: leg-left 0.9s ease-in-out infinite;
+        }
+        .person-leg.right {
+            left: 40px;
+            animation: leg-right 0.9s ease-in-out infinite;
+        }
+        .file {
+            position: absolute;
+            left: 42px;
+            bottom: 86px;
+            width: 24px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid #be952d;
+            background: linear-gradient(180deg, #f6dc8e 0%, #e7ba4d 100%);
+            box-shadow: 0 4px 10px rgba(23, 52, 95, 0.2);
+            animation: file-fly 2.6s linear infinite;
+        }
+        .file::before {
+            content: '';
+            position: absolute;
+            top: -4px;
+            left: 3px;
+            width: 10px;
+            height: 4px;
+            border-radius: 2px 2px 0 0;
+            background: #ffe9b6;
+            border: 1px solid #d4b362;
+            border-bottom: none;
+        }
+        .file-2 {
+            animation-delay: 0.86s;
+        }
+        .file-3 {
+            animation-delay: 1.72s;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 14px;
+            border: 1px solid #6b89b5;
+            border-radius: 9px;
+            padding: 8px 14px;
+            background: #254976;
+            color: #ffffff;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .back-link:hover {
+            background: #1d3b61;
+        }
+        @keyframes door-open {
+            0%, 100% {
+                transform: translateX(-50%) perspective(320px) rotateY(0deg);
+            }
+            40%, 70% {
+                transform: translateX(-50%) perspective(320px) rotateY(-42deg);
+            }
+        }
+        @keyframes glow-pulse {
+            0%, 100% {
+                opacity: 0.55;
+            }
+            50% {
+                opacity: 0.95;
+            }
+        }
+        @keyframes person-walk {
+            0%, 100% {
+                transform: translateX(0) scale(1);
+                opacity: 1;
+            }
+            60% {
+                transform: translateX(230px) scale(0.95);
+                opacity: 0.95;
+            }
+            80% {
+                transform: translateX(280px) scale(0.88);
+                opacity: 0.72;
+            }
+        }
+        @keyframes arm-left {
+            0%, 100% {
+                transform: rotate(24deg);
+            }
+            50% {
+                transform: rotate(-12deg);
+            }
+        }
+        @keyframes arm-right {
+            0%, 100% {
+                transform: rotate(-22deg);
+            }
+            50% {
+                transform: rotate(12deg);
+            }
+        }
+        @keyframes leg-left {
+            0%, 100% {
+                transform: rotate(12deg);
+            }
+            50% {
+                transform: rotate(-10deg);
+            }
+        }
+        @keyframes leg-right {
+            0%, 100% {
+                transform: rotate(-10deg);
+            }
+            50% {
+                transform: rotate(12deg);
+            }
+        }
+        @keyframes file-fly {
+            0% {
+                transform: translate(0, 0) rotate(-4deg);
+                opacity: 0;
+            }
+            12% {
+                opacity: 1;
+            }
+            80% {
+                opacity: 1;
+            }
+            100% {
+                transform: translate(360px, -16px) rotate(4deg);
+                opacity: 0;
+            }
+        }
+        @media (max-width: 720px) {
+            .error-card {
+                padding: 18px 14px;
+            }
+            .scene {
+                min-height: 230px;
+            }
+            .door-zone {
+                right: 5%;
+                width: 180px;
+                height: 166px;
+            }
+            .door-sign {
+                width: 162px;
+                font-size: 10px;
+                padding: 6px 8px;
+            }
+            .door {
+                width: 114px;
+                height: 138px;
+            }
+            .person {
+                left: 20px;
+                transform: scale(0.9);
+                transform-origin: left bottom;
+            }
+            @keyframes file-fly {
+                0% {
+                    transform: translate(0, 0) rotate(-4deg);
+                    opacity: 0;
+                }
+                12% {
+                    opacity: 1;
+                }
+                80% {
+                    opacity: 1;
+                }
+                100% {
+                    transform: translate(270px, -12px) rotate(4deg);
+                    opacity: 0;
+                }
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="error-card">
+        <p class="error-code">${escapeHtmlText(String(safeCode))}</p>
+        <h1 class="error-title">${escapeHtmlText(title)}</h1>
+        <p class="error-detail">${escapeHtmlText(detail)}</p>
+        ${pathHtml}
+        <div class="scene" role="img" aria-label="Persona entrando a una puerta con letrero de solo personal autorizado.">
+            <div class="door-zone">
+                <div class="door-sign">SOLO PERSONAL AUTORIZADO</div>
+                <div class="door-glow"></div>
+                <div class="door"></div>
+            </div>
+            <div class="person">
+                <span class="person-head"></span>
+                <span class="person-body"></span>
+                <span class="person-arm left"></span>
+                <span class="person-arm right"></span>
+                <span class="person-leg left"></span>
+                <span class="person-leg right"></span>
+            </div>
+            <span class="file file-1"></span>
+            <span class="file file-2"></span>
+            <span class="file file-3"></span>
+        </div>
+        <a class="back-link" href="/index.html">Volver al inicio</a>
+    </main>
+</body>
+</html>`;
+}
+
+function sendErrorPage(res, { statusCode = 500, message = '', requestPath = '' } = {}) {
+    const safeCode = Number.isInteger(statusCode) && statusCode >= 100 ? statusCode : 500;
+    const html = buildErrorPageHtml({
+        statusCode: safeCode,
+        message,
+        requestPath
+    });
+    return res.status(safeCode).type('html; charset=utf-8').send(html);
+}
+
 function normalizeRut(value) {
     return String(value || '').replace(/[^0-9kK]/g, '').toLowerCase();
+}
+
+function normalizeRolForSearch(value) {
+    const original = normalizeText(value);
+    const normalized = String(original || '')
+        .normalize('NFKC')
+        .replace(/\u00A0/g, ' ')
+        .toLowerCase();
+    const canonical = normalized.replace(/\s+/g, '');
+    const compact = canonical.replace(/[^0-9a-z]/g, '');
+
+    return {
+        original,
+        canonical,
+        compact
+    };
+}
+
+function buildRolCanonicalSql(columnName = 'rol') {
+    return `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${columnName}, ' ', ''), CHAR(9), ''), CHAR(10), ''), CHAR(13), ''), CHAR(160), ''))`;
+}
+
+function buildRolCompactSql(columnName = 'rol') {
+    const canonicalSql = buildRolCanonicalSql(columnName);
+    return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${canonicalSql}, '.', ''), '-', ''), '_', ''), '/', ''), ',', ''), ';', ''), ':', '')`;
+}
+
+function buildRolWhereClause(columnName = 'rol') {
+    const canonicalSql = buildRolCanonicalSql(columnName);
+    const compactSql = buildRolCompactSql(columnName);
+    return `(${canonicalSql} = ? OR ${compactSql} = ?)`;
 }
 
 function calculateRutVerifierDigit(rutBodyDigits) {
@@ -561,16 +1253,20 @@ function toApiDateTimeLocal(value) {
             return '';
         }
 
-        const year = String(value.getFullYear()).padStart(4, '0');
-        const month = String(value.getMonth() + 1).padStart(2, '0');
-        const day = String(value.getDate()).padStart(2, '0');
-        const hours = String(value.getHours()).padStart(2, '0');
-        const minutes = String(value.getMinutes()).padStart(2, '0');
-        const seconds = String(value.getSeconds()).padStart(2, '0');
-        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        // Always include timezone in API payload to avoid client-side offsets.
+        return value.toISOString();
     }
 
-    return String(value || '');
+    const raw = String(value || '').trim();
+    if (!raw) {
+        return '';
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+        return raw;
+    }
+    return parsed.toISOString();
 }
 
 function parseNumLotes(value) {
@@ -1538,6 +2234,13 @@ function toHistoryRow(row) {
         editado: wasEdited,
         editadoPor: editedBy || '',
         editadoEn: editedAt
+    };
+}
+
+function toPublicProgressHistoryRow(row) {
+    return {
+        fecha: normalizeText(row?.fecha),
+        comentario: String(row?.comentario || '')
     };
 }
 
@@ -2739,7 +3442,8 @@ async function getCurrentMonthUtmStatus() {
         anio: period.anio,
         mes: period.mes,
         dia: period.dia,
-        required: period.dia === 1 || !currentRow,
+        // Debe exigir captura solo cuando no existe UTM del periodo actual.
+        required: !currentRow,
         existeRegistro: Boolean(currentRow),
         utm: currentRow ? toUtmMensualRow(currentRow) : null,
         suggestedUtm: suggestedUtm || null
@@ -2788,6 +3492,10 @@ function isAllowedOrigin(origin) {
         return true;
     }
 
+    if (!IS_PRODUCTION_ENV && isPrivateNetworkOrigin(origin)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -2795,6 +3503,48 @@ function isLocalhostOrigin(value) {
     try {
         const parsed = new URL(value);
         return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function isPrivateIpv4Host(hostname) {
+    const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(hostname || '').trim());
+    if (!match) {
+        return false;
+    }
+
+    const octets = match.slice(1).map((part) => Number(part));
+    if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+        return false;
+    }
+
+    if (octets[0] === 10) {
+        return true;
+    }
+    if (octets[0] === 127) {
+        return true;
+    }
+    if (octets[0] === 192 && octets[1] === 168) {
+        return true;
+    }
+    if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) {
+        return true;
+    }
+
+    return false;
+}
+
+function isPrivateNetworkOrigin(value) {
+    try {
+        const parsed = new URL(value);
+        const protocol = String(parsed.protocol || '').toLowerCase();
+        if (protocol !== 'http:' && protocol !== 'https:') {
+            return false;
+        }
+
+        const hostname = String(parsed.hostname || '').trim().toLowerCase();
+        return hostname === 'localhost' || isPrivateIpv4Host(hostname);
     } catch (error) {
         return false;
     }
@@ -2884,6 +3634,263 @@ function registerFailedLoginAttempt(req, username) {
 function clearFailedLoginAttempts(req, username) {
     const key = getLoginAttemptKey(req, username);
     loginAttempts.delete(key);
+}
+
+function setMaintenanceModeCacheFromRow(row) {
+    const source = row && typeof row === 'object' ? row : {};
+    const enabledValue = Number(source.maintenance_mode || source.maintenanceMode || 0);
+    const updatedAt = source.updated_at instanceof Date ? source.updated_at.toISOString() : normalizeText(source.updated_at || '');
+    const updatedBy = normalizeText(source.updated_by_name || source.updatedBy || '');
+
+    maintenanceModeCache = {
+        enabled: enabledValue === 1,
+        updatedAt,
+        updatedBy
+    };
+}
+
+function normalizeLoginRouteNoticeUrl(value) {
+    const raw = normalizeText(value || LOGIN_ROUTE_NOTICE_DEFAULT_URL);
+    if (!raw) {
+        return normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/registro/login/registro.html');
+    }
+
+    if (/^https?:\/\//i.test(raw)) {
+        return raw;
+    }
+
+    if (/^localhost(?:\:\d+)?\//i.test(raw) || /^127\.0\.0\.1(?:\:\d+)?\//i.test(raw)) {
+        return `http://${raw}`;
+    }
+
+    if (/^[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw)) {
+        return `https://${raw}`;
+    }
+
+    if (raw.startsWith('/')) {
+        return raw;
+    }
+
+    return `/${raw.replace(/^\/+/, '')}`;
+}
+
+function toIsoStringOrEmpty(value) {
+    if (!value) {
+        return '';
+    }
+
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? '' : value.toISOString();
+    }
+
+    const text = normalizeText(value);
+    if (!text) {
+        return '';
+    }
+
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+}
+
+function setLoginRouteNoticeCacheFromRow(row) {
+    const source = row && typeof row === 'object' ? row : {};
+    loginRouteNoticeCache = {
+        enabled: Number(source.login_notice_enabled || source.loginNoticeEnabled || 0) === 1,
+        url: normalizeLoginRouteNoticeUrl(source.login_notice_url || source.loginNoticeUrl || LOGIN_ROUTE_NOTICE_DEFAULT_URL),
+        message: normalizeText(source.login_notice_message || source.loginNoticeMessage || LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE),
+        startsAt: toIsoStringOrEmpty(source.login_notice_starts_at || source.loginNoticeStartsAt || ''),
+        expiresAt: toIsoStringOrEmpty(source.login_notice_expires_at || source.loginNoticeExpiresAt || ''),
+        updatedAt: toIsoStringOrEmpty(source.login_notice_updated_at || source.loginNoticeUpdatedAt || ''),
+        updatedBy: normalizeText(source.login_notice_updated_by_name || source.loginNoticeUpdatedBy || '')
+    };
+}
+
+function resolveLoginRouteNoticeStatusPayload() {
+    const enabled = Boolean(loginRouteNoticeCache.enabled);
+    const startsAt = normalizeText(loginRouteNoticeCache.startsAt || '');
+    const expiresAt = normalizeText(loginRouteNoticeCache.expiresAt || '');
+    const now = Date.now();
+    const expiresAtMs = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
+    const hasValidExpiration = Number.isFinite(expiresAtMs);
+    const active = enabled && (!hasValidExpiration || expiresAtMs > now);
+    const daysRemaining =
+        active && hasValidExpiration ? Math.max(1, Math.ceil((expiresAtMs - now) / (24 * 60 * 60 * 1000))) : 0;
+
+    return {
+        enabled,
+        active,
+        daysRemaining,
+        url: normalizeLoginRouteNoticeUrl(loginRouteNoticeCache.url || LOGIN_ROUTE_NOTICE_DEFAULT_URL),
+        message: normalizeText(loginRouteNoticeCache.message || LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE),
+        startsAt,
+        expiresAt,
+        updatedAt: normalizeText(loginRouteNoticeCache.updatedAt || ''),
+        updatedBy: normalizeText(loginRouteNoticeCache.updatedBy || '')
+    };
+}
+
+function getLoginRouteNoticePublicPayload() {
+    const status = resolveLoginRouteNoticeStatusPayload();
+    return {
+        active: status.active,
+        url: status.url,
+        message: status.message,
+        startsAt: status.startsAt,
+        expiresAt: status.expiresAt,
+        daysRemaining: status.daysRemaining
+    };
+}
+
+function getLoginRouteNoticeAdminPayload() {
+    return resolveLoginRouteNoticeStatusPayload();
+}
+
+function getMaintenanceModeStatusPayload() {
+    return {
+        enabled: Boolean(maintenanceModeCache.enabled),
+        updatedAt: normalizeText(maintenanceModeCache.updatedAt || ''),
+        updatedBy: normalizeText(maintenanceModeCache.updatedBy || '')
+    };
+}
+
+function isMaintenanceModeEnabled() {
+    return Boolean(maintenanceModeCache.enabled);
+}
+
+function shouldAutoDisableLoginRouteNotice() {
+    const status = resolveLoginRouteNoticeStatusPayload();
+    return status.enabled && !status.active;
+}
+
+function normalizeRequestPath(req) {
+    const rawPath = normalizeText(req?.path || req?.originalUrl || '/');
+    if (!rawPath) {
+        return '/';
+    }
+
+    const queryIndex = rawPath.indexOf('?');
+    return queryIndex >= 0 ? rawPath.slice(0, queryIndex) : rawPath;
+}
+
+function isApiRequestPath(pathname) {
+    return String(pathname || '').startsWith('/api/');
+}
+
+function isPublicFrontendPath(pathname) {
+    return PUBLIC_FRONTEND_PATHS.has(String(pathname || ''));
+}
+
+function isKnownFrontendPath(pathname) {
+    const normalizedPath = String(pathname || '');
+    if (!normalizedPath) {
+        return false;
+    }
+
+    if (KNOWN_FRONTEND_PATHS.has(normalizedPath)) {
+        return true;
+    }
+
+    if (normalizedPath === '/assets' || normalizedPath.startsWith('/assets/')) {
+        return true;
+    }
+
+    return false;
+}
+
+function shouldProtectFrontendPath(pathname) {
+    const normalizedPath = String(pathname || '');
+    if (!isKnownFrontendPath(normalizedPath)) {
+        return false;
+    }
+    return !isPublicFrontendPath(normalizedPath);
+}
+
+async function resolveMaintenanceSessionUser(req) {
+    if (!pool) {
+        return null;
+    }
+
+    const token = extractBearerToken(req);
+    if (!token) {
+        return null;
+    }
+
+    const session = await findSessionUserByToken(token);
+    if (!session || !session.user) {
+        return null;
+    }
+
+    req.authUser = session.user;
+    req.authSessionId = session.sessionId;
+    req.authTokenHash = session.tokenHash;
+    return session.user;
+}
+
+async function enforceMaintenanceMode(req, res, next) {
+    if (!isMaintenanceModeEnabled()) {
+        return next();
+    }
+
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
+
+    const pathname = normalizeRequestPath(req);
+    if (MAINTENANCE_ALLOWED_PAGE_PATHS.has(pathname)) {
+        return next();
+    }
+
+    let sessionUser = null;
+    try {
+        sessionUser = await resolveMaintenanceSessionUser(req);
+    } catch (error) {
+        sessionUser = null;
+    }
+
+    if (isSuperUser(sessionUser)) {
+        return next();
+    }
+
+    if (isApiRequestPath(pathname)) {
+        if (MAINTENANCE_ALLOWED_API_PATHS.has(pathname)) {
+            return next();
+        }
+
+        return res.status(503).json({
+            message: 'El sitio se encuentra en mantencion. Intenta nuevamente mas tarde.',
+            code: 'SITE_MAINTENANCE'
+        });
+    }
+
+    return res.redirect('/mantenimiento.html');
+}
+
+async function enforceFrontendRouteProtection(req, res, next) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+    }
+
+    const pathname = normalizeRequestPath(req);
+    if (isApiRequestPath(pathname)) {
+        return next();
+    }
+
+    if (!shouldProtectFrontendPath(pathname)) {
+        return next();
+    }
+
+    let sessionUser = null;
+    try {
+        sessionUser = await resolveMaintenanceSessionUser(req);
+    } catch (error) {
+        sessionUser = null;
+    }
+
+    if (sessionUser) {
+        return next();
+    }
+
+    return res.redirect('/index.html');
 }
 
 async function cleanupExpiredSessionsIfNeeded(force = false) {
@@ -3671,6 +4678,214 @@ async function fetchHistoryByRegistroId(registroId) {
     return rows.map(toHistoryRow);
 }
 
+async function createSystemConfigTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS sistema_configuracion (
+            id TINYINT UNSIGNED NOT NULL,
+            maintenance_mode TINYINT(1) NOT NULL DEFAULT 0,
+            login_notice_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            login_notice_url VARCHAR(255) NOT NULL DEFAULT '/registro/login/registro.html',
+            login_notice_message VARCHAR(600) NULL,
+            login_notice_starts_at DATETIME NULL,
+            login_notice_expires_at DATETIME NULL,
+            login_notice_updated_by_id INT UNSIGNED NULL,
+            login_notice_updated_by_name VARCHAR(120) NULL,
+            login_notice_updated_at DATETIME NULL,
+            updated_by_id INT UNSIGNED NULL,
+            updated_by_name VARCHAR(120) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        )
+    `);
+}
+
+async function ensureSystemConfigColumns() {
+    await ensureColumn('sistema_configuracion', 'login_notice_enabled', '`login_notice_enabled` TINYINT(1) NOT NULL DEFAULT 0 AFTER maintenance_mode');
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_url',
+        "`login_notice_url` VARCHAR(255) NOT NULL DEFAULT '/registro/login/registro.html' AFTER login_notice_enabled"
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_message',
+        '`login_notice_message` VARCHAR(600) NULL AFTER login_notice_url'
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_starts_at',
+        '`login_notice_starts_at` DATETIME NULL AFTER login_notice_message'
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_expires_at',
+        '`login_notice_expires_at` DATETIME NULL AFTER login_notice_starts_at'
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_updated_by_id',
+        '`login_notice_updated_by_id` INT UNSIGNED NULL AFTER login_notice_expires_at'
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_updated_by_name',
+        '`login_notice_updated_by_name` VARCHAR(120) NULL AFTER login_notice_updated_by_id'
+    );
+    await ensureColumn(
+        'sistema_configuracion',
+        'login_notice_updated_at',
+        '`login_notice_updated_at` DATETIME NULL AFTER login_notice_updated_by_name'
+    );
+}
+
+async function ensureSystemConfigRow() {
+    const defaultUrl = normalizeLoginRouteNoticeUrl(LOGIN_ROUTE_NOTICE_DEFAULT_URL);
+    const defaultMessage = normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE);
+    await pool.execute(
+        `
+            INSERT INTO sistema_configuracion (id, maintenance_mode, login_notice_url, login_notice_message)
+            VALUES (?, 0, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                login_notice_url = IF(
+                    login_notice_url IS NULL OR login_notice_url = '' OR login_notice_url = '/registro/login/registro.html',
+                    VALUES(login_notice_url),
+                    login_notice_url
+                ),
+                login_notice_message = IF(
+                    login_notice_message IS NULL OR login_notice_message = '',
+                    VALUES(login_notice_message),
+                    login_notice_message
+                )
+        `,
+        [SYSTEM_CONFIG_SINGLETON_ID, defaultUrl, defaultMessage]
+    );
+}
+
+async function loadMaintenanceModeCache() {
+    const [rows] = await pool.execute(
+        `
+            SELECT
+                maintenance_mode,
+                updated_by_name,
+                updated_at,
+                login_notice_enabled,
+                login_notice_url,
+                login_notice_message,
+                login_notice_starts_at,
+                login_notice_expires_at,
+                login_notice_updated_by_name,
+                login_notice_updated_at
+            FROM sistema_configuracion
+            WHERE id = ?
+            LIMIT 1
+        `,
+        [SYSTEM_CONFIG_SINGLETON_ID]
+    );
+
+    if (!rows.length) {
+        maintenanceModeCache = {
+            enabled: false,
+            updatedAt: '',
+            updatedBy: ''
+        };
+        loginRouteNoticeCache = {
+            enabled: false,
+            url: normalizeLoginRouteNoticeUrl(LOGIN_ROUTE_NOTICE_DEFAULT_URL),
+            message: normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE),
+            startsAt: '',
+            expiresAt: '',
+            updatedAt: '',
+            updatedBy: ''
+        };
+        return;
+    }
+
+    setMaintenanceModeCacheFromRow(rows[0]);
+    setLoginRouteNoticeCacheFromRow(rows[0]);
+
+    if (shouldAutoDisableLoginRouteNotice()) {
+        await pool.execute(
+            `
+                UPDATE sistema_configuracion
+                SET login_notice_enabled = 0,
+                    login_notice_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND login_notice_enabled = 1
+            `,
+            [SYSTEM_CONFIG_SINGLETON_ID]
+        );
+        loginRouteNoticeCache.enabled = false;
+        loginRouteNoticeCache.updatedAt = new Date().toISOString();
+    }
+}
+
+async function updateMaintenanceMode(enabled, actorUser = null) {
+    const enabledFlag = enabled ? 1 : 0;
+    const actorIdValue = Number(actorUser?.id);
+    const updatedById = Number.isInteger(actorIdValue) && actorIdValue > 0 ? actorIdValue : null;
+    const updatedByName = normalizeText(actorUser?.nombre || actorUser?.username || '') || null;
+
+    await pool.execute(
+        `
+            UPDATE sistema_configuracion
+            SET maintenance_mode = ?, updated_by_id = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `,
+        [enabledFlag, updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
+    );
+
+    await loadMaintenanceModeCache();
+    return getMaintenanceModeStatusPayload();
+}
+
+async function updateLoginRouteNotice(enabled, actorUser = null, requestedUrl = '') {
+    const actorIdValue = Number(actorUser?.id);
+    const updatedById = Number.isInteger(actorIdValue) && actorIdValue > 0 ? actorIdValue : null;
+    const updatedByName = normalizeText(actorUser?.nombre || actorUser?.username || '') || null;
+    const safeUrl = normalizeLoginRouteNoticeUrl(
+        requestedUrl || loginRouteNoticeCache.url || LOGIN_ROUTE_NOTICE_DEFAULT_URL
+    );
+    const safeMessage = normalizeText(loginRouteNoticeCache.message || LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE);
+
+    if (exceedsMaxLength(safeUrl, LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH)) {
+        throw new Error(`La URL del aviso excede ${LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH} caracteres.`);
+    }
+
+    if (enabled) {
+        await pool.execute(
+            `
+                UPDATE sistema_configuracion
+                SET login_notice_enabled = 1,
+                    login_notice_url = ?,
+                    login_notice_message = ?,
+                    login_notice_starts_at = CURRENT_TIMESTAMP,
+                    login_notice_expires_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? DAY),
+                    login_notice_updated_by_id = ?,
+                    login_notice_updated_by_name = ?,
+                    login_notice_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `,
+            [safeUrl, safeMessage, LOGIN_ROUTE_NOTICE_DURATION_DAYS, updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
+        );
+    } else {
+        await pool.execute(
+            `
+                UPDATE sistema_configuracion
+                SET login_notice_enabled = 0,
+                    login_notice_updated_by_id = ?,
+                    login_notice_updated_by_name = ?,
+                    login_notice_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `,
+            [updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
+        );
+    }
+
+    await loadMaintenanceModeCache();
+    return getLoginRouteNoticeAdminPayload();
+}
+
 async function initDatabase() {
     const sanitizedDbName = cleanDbIdentifier(DB_NAME) || 'geo_rural';
     const bootstrapConnection = await mysql.createConnection({
@@ -3769,6 +4984,9 @@ async function initDatabase() {
         await createUtmMensualTable();
         await createCotizacionServiciosTable();
         await createCorreoConfiguracionTable();
+        await createSystemConfigTable();
+        await ensureSystemConfigColumns();
+        await ensureSystemConfigRow();
         await ensureCorreoTemplateColumns();
         await seedCotizacionServiciosDefaults();
         await ensureFacturaSolicitudesUniqueIngresoIndex();
@@ -3777,6 +4995,7 @@ async function initDatabase() {
         await ensureAtLeastOnePrivilegedAccount();
         await ensureGuestUserAccount();
         await seedBranchesFromUsers();
+        await loadMaintenanceModeCache();
     } catch (error) {
         console.error('No fue posible terminar la inicializacion de la base:', error.message);
         throw error;
@@ -3793,6 +5012,8 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.use('/api', enforceAllowedOrigin);
+app.use(enforceMaintenanceMode);
+app.use(enforceFrontendRouteProtection);
 
 app.post('/api/auth/login', async (req, res) => {
     try {
@@ -4010,8 +5231,131 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     }
 });
 
+app.get('/api/public/registros/progreso', async (req, res) => {
+    try {
+        const rolSearch = normalizeRolForSearch(req.query.rol);
+        const rol = rolSearch.original;
+
+        if (!rol) {
+            return res.status(400).json({ message: 'Ingresa el ROL para buscar el progreso.' });
+        }
+
+        if (exceedsMaxLength(rol, 120)) {
+            return res.status(400).json({ message: 'El ROL excede el largo maximo permitido.' });
+        }
+
+        if (!rolSearch.compact) {
+            return res.status(400).json({ message: 'Ingresa un ROL valido.' });
+        }
+
+        const [rows] = await pool.execute(
+            `
+                SELECT
+                    id,
+                    nombre,
+                    correo,
+                    rol
+                FROM registros
+                WHERE ${buildRolWhereClause('rol')}
+                ORDER BY id DESC
+                LIMIT 1
+            `,
+            [rolSearch.canonical, rolSearch.compact]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ message: 'No se encontro un registro con ese ROL.' });
+        }
+
+        const targetRow = rows[0];
+        const historial = await fetchHistoryByRegistroId(targetRow.id);
+        return res.json({
+            nombre: normalizeText(targetRow.nombre),
+            correo: normalizeText(targetRow.correo).toLowerCase(),
+            rol: normalizeText(targetRow.rol),
+            historial: historial.map(toPublicProgressHistoryRow)
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible cargar el historial de progreso.' });
+    }
+});
+
+app.get('/api/public/system-status', async (req, res) => {
+    try {
+        await loadMaintenanceModeCache();
+        return res.json({
+            maintenance: getMaintenanceModeStatusPayload(),
+            loginRouteNotice: getLoginRouteNoticePublicPayload()
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible obtener el estado del sistema.' });
+    }
+});
+
 app.use('/api', requireAuth);
 app.use('/api', requirePasswordChangeCompleted);
+
+app.get('/api/system/mantenimiento', requireSuper, async (req, res) => {
+    try {
+        await loadMaintenanceModeCache();
+        return res.json({
+            maintenance: getMaintenanceModeStatusPayload(),
+            loginRouteNotice: getLoginRouteNoticeAdminPayload()
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible obtener el estado de mantencion.' });
+    }
+});
+
+app.put('/api/system/mantenimiento', requireSuper, async (req, res) => {
+    try {
+        const enabled = parseMaintenanceModeInput(req.body?.enabled);
+        if (enabled === null) {
+            return res.status(400).json({ message: 'Debes enviar enabled en formato booleano.' });
+        }
+
+        const maintenance = await updateMaintenanceMode(enabled, req.authUser);
+        console.info(
+            `[System] Modo mantencion ${enabled ? 'activado' : 'desactivado'} por ${normalizeText(req.authUser?.username || req.authUser?.nombre || 'super')}.`
+        );
+        return res.json({
+            message: enabled ? 'Modo mantencion activado.' : 'Modo mantencion desactivado.',
+            maintenance,
+            loginRouteNotice: getLoginRouteNoticeAdminPayload()
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible actualizar el modo de mantencion.' });
+    }
+});
+
+app.put('/api/system/login-route-notice', requireSuper, async (req, res) => {
+    try {
+        const enabled = parseMaintenanceModeInput(req.body?.enabled);
+        if (enabled === null) {
+            return res.status(400).json({ message: 'Debes enviar enabled en formato booleano.' });
+        }
+
+        const requestedUrl = normalizeText(req.body?.url || '');
+        const loginRouteNotice = await updateLoginRouteNotice(enabled, req.authUser, requestedUrl);
+        console.info(
+            `[System] Aviso de ruta login ${enabled ? 'activado' : 'desactivado'} por ${normalizeText(req.authUser?.username || req.authUser?.nombre || 'super')}.`
+        );
+        return res.json({
+            message: enabled
+                ? `Aviso activado por ${LOGIN_ROUTE_NOTICE_DURATION_DAYS} dias.`
+                : 'Aviso de ruta login desactivado.',
+            maintenance: getMaintenanceModeStatusPayload(),
+            loginRouteNotice
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: error.message || 'No fue posible actualizar el aviso de ruta login.' });
+    }
+});
 
 app.get('/api/mail-templates', async (req, res) => {
     try {
@@ -6400,7 +7744,7 @@ app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, r
         );
         if (!historyRows.length) {
             await connection.rollback();
-            return res.status(404).json({ message: 'No existe ese comentario en el historial.' });
+            return res.status(404).json({ message: 'No existe ese comentario en el historial de progreso.' });
         }
 
         const action = normalizeText(historyRows[0].accion).toUpperCase();
@@ -6472,13 +7816,13 @@ app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, r
 
         await connection.commit();
         return res.json({
-            message: 'Comentario de historial actualizado correctamente.',
+            message: 'Comentario de historial de progreso actualizado correctamente.',
             historial: updatedRows.length > 0 ? toHistoryRow(updatedRows[0]) : null
         });
     } catch (error) {
         await connection.rollback();
         console.error(error);
-        return res.status(500).json({ message: 'No fue posible actualizar el comentario del historial.' });
+        return res.status(500).json({ message: 'No fue posible actualizar el comentario del historial de progreso.' });
     } finally {
         connection.release();
     }
@@ -6825,6 +8169,7 @@ app.get('/api/registros/buscar', async (req, res) => {
         const nombre = normalizeText(req.query.nombre);
         const rut = normalizeText(req.query.rut);
         const rol = normalizeText(req.query.rol);
+        const rolSearch = normalizeRolForSearch(rol);
         const numIngreso = normalizeText(req.query.numIngreso);
         const registroScope = getRegistroAccessScope(req.authUser);
 
@@ -6842,6 +8187,10 @@ app.get('/api/registros/buscar', async (req, res) => {
 
         if (!nombre && !rut && !rol && !numIngreso) {
             return res.status(400).json({ message: 'Ingresa nombre, rut, rol o NRO INGRESO para buscar.' });
+        }
+
+        if (rol && !rolSearch.compact) {
+            return res.status(400).json({ message: 'Ingresa un ROL valido para buscar.' });
         }
 
         const where = [];
@@ -6863,8 +8212,8 @@ app.get('/api/registros/buscar', async (req, res) => {
         }
 
         if (rol) {
-            where.push('LOWER(rol) = LOWER(?)');
-            values.push(rol);
+            where.push(buildRolWhereClause('rol'));
+            values.push(rolSearch.canonical, rolSearch.compact);
         }
 
         if (registroScope.clause) {
@@ -6957,11 +8306,23 @@ app.get('/api/registros/:numIngreso/historial', async (req, res) => {
         return res.json({ historial });
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: 'No fue posible cargar el historial.' });
+        return res.status(500).json({ message: 'No fue posible cargar el historial de progreso.' });
     }
 });
 
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
+
+app.get('/mantenimiento', (req, res) => {
+    res.sendFile(path.join(__dirname, 'mantenimiento.html'));
+});
+
+app.get('/mantenimiento/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'mantenimiento.html'));
+});
+
+app.get('/seguimiento', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -6969,6 +8330,22 @@ app.get('/', (req, res) => {
 
 app.get('/index.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/registro', (req, res) => {
+    res.redirect('/index.html');
+});
+
+app.get('/registro/', (req, res) => {
+    res.redirect('/index.html');
+});
+
+app.get('/registro/login', (req, res) => {
+    res.redirect('/registro/login/registro.html');
+});
+
+app.get('/registro/login/', (req, res) => {
+    res.redirect('/registro/login/registro.html');
 });
 
 for (const fileName of FRONTEND_FILES) {
@@ -6981,7 +8358,18 @@ for (const fileName of FRONTEND_FILES) {
     });
 }
 
+app.use((req, res, next) => {
+    const pathname = normalizeRequestPath(req);
+    if (isApiRequestPath(pathname)) {
+        return res.status(404).json({ message: 'Ruta API no encontrada.' });
+    }
+
+    return res.redirect('/index.html');
+});
+
 app.use((err, req, res, next) => {
+    const pathname = normalizeRequestPath(req);
+    const isApiPath = isApiRequestPath(pathname);
     const isJsonParseError =
         err &&
         (err.type === 'entity.parse.failed' ||
@@ -6990,15 +8378,24 @@ app.use((err, req, res, next) => {
                 Object.prototype.hasOwnProperty.call(err, 'body')));
 
     if (isJsonParseError) {
-        return res.status(400).json({ message: 'JSON invalido en la solicitud.' });
+        if (isApiPath) {
+            return res.status(400).json({ message: 'JSON invalido en la solicitud.' });
+        }
+        return res.redirect('/index.html');
     }
 
     if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
-        return res.status(err.status).json({ message: err.message || 'Solicitud invalida.' });
+        if (isApiPath) {
+            return res.status(err.status).json({ message: err.message || 'Solicitud invalida.' });
+        }
+        return res.redirect('/index.html');
     }
 
     console.error(err);
-    return res.status(500).json({ message: 'Error interno del servidor.' });
+    if (isApiPath) {
+        return res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+    return res.redirect('/index.html');
 });
 
 async function start() {
@@ -7016,8 +8413,17 @@ async function start() {
         });
 
         {
+            console.log(`[Config] APP_ENV=${APP_ENV}`);
+            if (ENV_CONFIG.loadedFiles.length > 0) {
+                console.log(`[Config] Archivos de entorno cargados: ${ENV_CONFIG.loadedFiles.join(', ')}`);
+            } else {
+                console.log('[Config] No se encontraron archivos .env en el directorio actual.');
+            }
             console.log(`Servidor activo en http://${HOST}:${PORT}`);
             console.log(`CORS habilitado para: ${ALLOWED_ORIGINS.join(', ')}`);
+            if (!IS_PRODUCTION_ENV) {
+                console.log('CORS en desarrollo: se permite acceso desde origenes de red privada (LAN).');
+            }
 
             if (API_WRITE_KEY) {
                 console.log('Proteccion de escritura activada (header: X-API-Key).');
