@@ -148,7 +148,7 @@ const LOGIN_ROUTE_NOTICE_DEV_URL = normalizeText(
     process.env.LOGIN_ROUTE_NOTICE_DEV_URL || 'http://localhost/geo_rural/registro/login/registro.html'
 );
 const LOGIN_ROUTE_NOTICE_PROD_URL = normalizeText(
-    process.env.LOGIN_ROUTE_NOTICE_PROD_URL || 'https://my-registro.cl/registro/login/registro.html'
+    process.env.LOGIN_ROUTE_NOTICE_PROD_URL || 'https://mi-registro.cl/registro/login/registro.html'
 );
 const LOGIN_ROUTE_NOTICE_DEFAULT_URL = normalizeText(
     process.env.LOGIN_ROUTE_NOTICE_DEFAULT_URL || (IS_PRODUCTION_ENV ? LOGIN_ROUTE_NOTICE_PROD_URL : LOGIN_ROUTE_NOTICE_DEV_URL)
@@ -310,6 +310,7 @@ const KNOWN_FRONTEND_PATHS = new Set(
         '/mantenimiento/'
     ].concat(FRONTEND_FILES.map((fileName) => `/${fileName}`))
 );
+const LOGIN_REDIRECT_ENTRY_PATHS = new Set(['/registro', '/registro/login']);
 
 app.use(
     cors({
@@ -3655,6 +3656,19 @@ function normalizeLoginRouteNoticeUrl(value) {
         return normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/registro/login/registro.html');
     }
 
+    if (IS_PRODUCTION_ENV) {
+        if (
+            /^https?:\/\/localhost(?:\:\d+)?(?:\/|$)/i.test(raw) ||
+            /^https?:\/\/127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(raw) ||
+            /^localhost(?:\:\d+)?(?:\/|$)/i.test(raw) ||
+            /^127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(raw) ||
+            /^https?:\/\/my-registro\.cl(?:\/|$)/i.test(raw) ||
+            /^my-registro\.cl(?:\/|$)/i.test(raw)
+        ) {
+            return normalizeText(LOGIN_ROUTE_NOTICE_PROD_URL || LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/registro/login/registro.html');
+        }
+    }
+
     if (/^https?:\/\//i.test(raw)) {
         return raw;
     }
@@ -3743,6 +3757,136 @@ function getLoginRouteNoticePublicPayload() {
 
 function getLoginRouteNoticeAdminPayload() {
     return resolveLoginRouteNoticeStatusPayload();
+}
+
+function normalizeHostName(value) {
+    const host = normalizeText(value || '').toLowerCase();
+    if (!host) {
+        return '';
+    }
+
+    const bracketIpv6Match = /^\[([^\]]+)\](?::\d+)?$/.exec(host);
+    if (bracketIpv6Match) {
+        return normalizeText(bracketIpv6Match[1]);
+    }
+
+    if (/^[^:]+:\d+$/.test(host)) {
+        return host.replace(/:\d+$/, '');
+    }
+
+    return host;
+}
+
+function isLocalhostHostName(hostname) {
+    const host = normalizeHostName(hostname);
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function getRequestHostName(req) {
+    const forwardedHost = normalizeText(req?.get?.('x-forwarded-host'));
+    const rawHost = forwardedHost || normalizeText(req?.get?.('host'));
+    if (!rawHost) {
+        return '';
+    }
+
+    const firstHost = normalizeText(rawHost.split(',')[0]);
+    return normalizeHostName(firstHost);
+}
+
+function getRequestProtocol(req) {
+    const forwardedProto = normalizeText(req?.get?.('x-forwarded-proto'));
+    if (forwardedProto) {
+        const first = normalizeText(forwardedProto.split(',')[0]).toLowerCase();
+        if (first === 'http' || first === 'https') {
+            return first;
+        }
+    }
+
+    const requestProto = normalizeText(req?.protocol).toLowerCase();
+    if (requestProto === 'http' || requestProto === 'https') {
+        return requestProto;
+    }
+
+    return 'https';
+}
+
+function normalizeComparablePathname(pathname) {
+    const raw = normalizeText(pathname || '');
+    if (!raw) {
+        return '/';
+    }
+
+    const withoutQuery = raw.split('?')[0].split('#')[0];
+    const withLeadingSlash = withoutQuery.startsWith('/') ? withoutQuery : `/${withoutQuery}`;
+    const compacted = withLeadingSlash.replace(/\/{2,}/g, '/');
+    if (compacted.length > 1 && compacted.endsWith('/')) {
+        return compacted.slice(0, -1);
+    }
+    return compacted || '/';
+}
+
+function extractPathnameFromRedirectTarget(target) {
+    const normalizedTarget = normalizeText(target || '');
+    if (!normalizedTarget) {
+        return '';
+    }
+
+    if (/^https?:\/\//i.test(normalizedTarget)) {
+        try {
+            return normalizeComparablePathname(new URL(normalizedTarget).pathname || '/');
+        } catch (error) {
+            return '';
+        }
+    }
+
+    if (normalizedTarget.startsWith('/')) {
+        return normalizeComparablePathname(normalizedTarget);
+    }
+
+    return '';
+}
+
+function isLoopbackRedirectTarget(target) {
+    const value = normalizeText(target || '');
+    if (!value) {
+        return false;
+    }
+
+    return (
+        /^https?:\/\/localhost(?:\:\d+)?(?:\/|$)/i.test(value) ||
+        /^https?:\/\/127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(value) ||
+        /^https?:\/\/\[::1\](?:\:\d+)?(?:\/|$)/i.test(value) ||
+        /^localhost(?:\:\d+)?(?:\/|$)/i.test(value) ||
+        /^127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(value) ||
+        /^\[::1\](?:\:\d+)?(?:\/|$)/i.test(value)
+    );
+}
+
+function resolveConfiguredLoginRedirectTarget(requestPathname = '', req = null) {
+    const fallbackTarget = '/registro/login/registro.html';
+    const configuredTarget = normalizeLoginRouteNoticeUrl(
+        loginRouteNoticeCache.url || LOGIN_ROUTE_NOTICE_DEFAULT_URL || fallbackTarget
+    );
+    if (!configuredTarget) {
+        return fallbackTarget;
+    }
+
+    const requestComparablePath = normalizeComparablePathname(requestPathname);
+    const configuredPathname = extractPathnameFromRedirectTarget(configuredTarget);
+    if (configuredPathname && LOGIN_REDIRECT_ENTRY_PATHS.has(configuredPathname)) {
+        return fallbackTarget;
+    }
+    if (configuredPathname && configuredPathname === requestComparablePath) {
+        return fallbackTarget;
+    }
+
+    const requestHostName = getRequestHostName(req);
+    if (requestHostName && !isLocalhostHostName(requestHostName) && isLoopbackRedirectTarget(configuredTarget)) {
+        const protocol = getRequestProtocol(req);
+        return `${protocol}://${requestHostName}${fallbackTarget}`;
+    }
+
+    return configuredTarget;
 }
 
 function getMaintenanceModeStatusPayload() {
@@ -4760,6 +4904,31 @@ async function ensureSystemConfigRow() {
         `,
         [SYSTEM_CONFIG_SINGLETON_ID, defaultUrl, defaultMessage]
     );
+
+    if (IS_PRODUCTION_ENV) {
+        await pool.execute(
+            `
+                UPDATE sistema_configuracion
+                SET login_notice_url = ?
+                WHERE id = ?
+                  AND (
+                        login_notice_url IS NULL
+                     OR TRIM(login_notice_url) = ''
+                     OR LOWER(TRIM(login_notice_url)) = '/registro/login/registro.html'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'localhost/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE '127.0.0.1/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'http://localhost/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'https://localhost/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'http://127.0.0.1/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'https://127.0.0.1/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'my-registro.cl/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'http://my-registro.cl/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'https://my-registro.cl/%'
+                  )
+            `,
+            [defaultUrl, SYSTEM_CONFIG_SINGLETON_ID]
+        );
+    }
 }
 
 async function loadMaintenanceModeCache() {
@@ -4873,14 +5042,49 @@ async function updateLoginRouteNotice(enabled, actorUser = null, requestedUrl = 
             `
                 UPDATE sistema_configuracion
                 SET login_notice_enabled = 0,
+                    login_notice_url = ?,
+                    login_notice_message = ?,
                     login_notice_updated_by_id = ?,
                     login_notice_updated_by_name = ?,
                     login_notice_updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             `,
-            [updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
+            [safeUrl, safeMessage, updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
         );
     }
+
+    await loadMaintenanceModeCache();
+    return getLoginRouteNoticeAdminPayload();
+}
+
+async function updateLoginRouteNoticeUrl(actorUser = null, requestedUrl = '') {
+    const requestedValue = normalizeText(requestedUrl);
+    if (!requestedValue) {
+        throw new Error('Debes ingresar la URL de redireccion.');
+    }
+
+    const actorIdValue = Number(actorUser?.id);
+    const updatedById = Number.isInteger(actorIdValue) && actorIdValue > 0 ? actorIdValue : null;
+    const updatedByName = normalizeText(actorUser?.nombre || actorUser?.username || '') || null;
+    const safeUrl = normalizeLoginRouteNoticeUrl(requestedValue);
+    const safeMessage = normalizeText(loginRouteNoticeCache.message || LOGIN_ROUTE_NOTICE_DEFAULT_MESSAGE);
+
+    if (exceedsMaxLength(safeUrl, LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH)) {
+        throw new Error(`La URL del aviso excede ${LOGIN_ROUTE_NOTICE_MAX_URL_LENGTH} caracteres.`);
+    }
+
+    await pool.execute(
+        `
+            UPDATE sistema_configuracion
+            SET login_notice_url = ?,
+                login_notice_message = ?,
+                login_notice_updated_by_id = ?,
+                login_notice_updated_by_name = ?,
+                login_notice_updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `,
+        [safeUrl, safeMessage, updatedById, updatedByName, SYSTEM_CONFIG_SINGLETON_ID]
+    );
 
     await loadMaintenanceModeCache();
     return getLoginRouteNoticeAdminPayload();
@@ -5354,6 +5558,28 @@ app.put('/api/system/login-route-notice', requireSuper, async (req, res) => {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: error.message || 'No fue posible actualizar el aviso de ruta login.' });
+    }
+});
+
+app.put('/api/system/login-route-notice/url', requireSuper, async (req, res) => {
+    try {
+        const requestedUrl = normalizeText(req.body?.url || '');
+        if (!requestedUrl) {
+            return res.status(400).json({ message: 'Debes ingresar la URL de redireccion.' });
+        }
+
+        const loginRouteNotice = await updateLoginRouteNoticeUrl(req.authUser, requestedUrl);
+        console.info(
+            `[System] URL de redireccion login actualizada por ${normalizeText(req.authUser?.username || req.authUser?.nombre || 'super')}.`
+        );
+        return res.json({
+            message: 'URL de redireccion actualizada.',
+            maintenance: getMaintenanceModeStatusPayload(),
+            loginRouteNotice
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: error.message || 'No fue posible actualizar la URL de redireccion.' });
     }
 });
 
@@ -8333,19 +8559,19 @@ app.get('/index.html', (req, res) => {
 });
 
 app.get('/registro', (req, res) => {
-    res.redirect('/index.html');
+    res.redirect(resolveConfiguredLoginRedirectTarget(req.path, req));
 });
 
 app.get('/registro/', (req, res) => {
-    res.redirect('/index.html');
+    res.redirect(resolveConfiguredLoginRedirectTarget(req.path, req));
 });
 
 app.get('/registro/login', (req, res) => {
-    res.redirect('/registro/login/registro.html');
+    res.redirect(resolveConfiguredLoginRedirectTarget(req.path, req));
 });
 
 app.get('/registro/login/', (req, res) => {
-    res.redirect('/registro/login/registro.html');
+    res.redirect(resolveConfiguredLoginRedirectTarget(req.path, req));
 });
 
 for (const fileName of FRONTEND_FILES) {

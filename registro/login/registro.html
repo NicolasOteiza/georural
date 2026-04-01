@@ -327,7 +327,8 @@
 
                 <h4>AVISO NUEVA RUTA LOGIN (INDEX CLIENTE)</h4>
                 <p class="helper-text">
-                    Este aviso se muestra en grande en el menu cliente por 15 dias desde su activacion y luego se desactiva automaticamente.
+                    Esta URL la define SUPER y se usa para mostrar el popup en el menu cliente y para redireccionar `/registro` y `/registro/login`.
+                    El aviso se muestra en grande por 15 dias desde su activacion y luego se desactiva automaticamente.
                 </p>
                 <div class="admin-maintenance-grid">
                     <div class="admin-maintenance-item">
@@ -345,19 +346,19 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="adminLoginNoticeUrl">URL LOGIN PUBLICADA EN POPUP</label>
+                        <label for="adminLoginNoticeUrl">URL DE REDIRECCION Y POPUP DE LOGIN</label>
                         <input
                             type="text"
                             id="adminLoginNoticeUrl"
                             maxlength="255"
-                            placeholder="localhost/geo_rural/registro/login/registro.html"
+                            placeholder="https://mi-registro.cl/registro/login/registro.html"
                         >
                     </div>
                 </div>
                 <div class="admin-maintenance-actions">
                     <button type="button" id="adminLoginNoticeEnableBtn" class="admin-create-btn">ACTIVAR AVISO 15 DIAS</button>
                     <button type="button" id="adminLoginNoticeDisableBtn" class="admin-cancel-btn">DESACTIVAR AVISO</button>
-                    <button type="button" id="adminLoginNoticeRefreshBtn" class="admin-cancel-btn">ACTUALIZAR AVISO</button>
+                    <button type="button" id="adminLoginNoticeRefreshBtn" class="admin-cancel-btn">GUARDAR URL</button>
                 </div>
                 <p id="adminLoginNoticeMessage" class="form-message" role="status" aria-live="polite"></p>
             </section>
@@ -1198,6 +1199,6 @@
         </div>
     </div>
 
-    <script src="../../script.js?v=20260401-04"></script>
+    <script src="../../script.js?v=20260401-07"></script>
 </body>
 </html>

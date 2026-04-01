@@ -870,7 +870,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         ui.adminMaintenanceDisableBtn.addEventListener('click', () => void updateAdminMaintenanceMode(false));
     }
     if (ui.adminLoginNoticeRefreshBtn) {
-        ui.adminLoginNoticeRefreshBtn.addEventListener('click', () => void loadAdminMaintenanceStatus());
+        ui.adminLoginNoticeRefreshBtn.addEventListener('click', () => void updateAdminLoginRouteNoticeUrl());
     }
     if (ui.adminLoginNoticeEnableBtn) {
         ui.adminLoginNoticeEnableBtn.addEventListener('click', () => void updateAdminLoginRouteNotice(true));
@@ -6570,7 +6570,7 @@ function getDefaultLoginNoticeUrlByRuntime() {
     if (host === 'localhost' || host === '127.0.0.1') {
         return 'http://localhost/geo_rural/registro/login/registro.html';
     }
-    return 'https://my-registro.cl/registro/login/registro.html';
+    return 'https://mi-registro.cl/registro/login/registro.html';
 }
 
 function applyAdminLoginRouteNoticeStatus(status) {
@@ -6739,6 +6739,39 @@ async function updateAdminLoginRouteNotice(enabled) {
         );
     } catch (error) {
         setFormMessage(ui.adminLoginNoticeMessage, error.message || 'No fue posible actualizar el aviso.', 'error');
+    } finally {
+        adminLoginRouteNoticeUpdateInProgress = false;
+        setAdminLoginRouteNoticeButtonsBusy(false);
+    }
+}
+
+async function updateAdminLoginRouteNoticeUrl() {
+    if (!isSuperUser(currentUser) || adminLoginRouteNoticeUpdateInProgress) {
+        return;
+    }
+
+    const requestedUrl = normalizeAdminLoginNoticeUrl(ui?.adminLoginNoticeUrl?.value || '');
+    if (!requestedUrl) {
+        setFormMessage(ui.adminLoginNoticeMessage, 'Ingresa la URL de redireccion.', 'error');
+        return;
+    }
+
+    adminLoginRouteNoticeUpdateInProgress = true;
+    setAdminLoginRouteNoticeButtonsBusy(true);
+    setFormMessage(ui.adminLoginNoticeMessage, 'Guardando URL de redireccion...', '');
+
+    try {
+        const data = await apiRequest('/system/login-route-notice/url', {
+            method: 'PUT',
+            body: JSON.stringify({
+                url: requestedUrl
+            })
+        });
+        applyAdminMaintenanceStatus(data?.maintenance || null);
+        applyAdminLoginRouteNoticeStatus(data?.loginRouteNotice || null);
+        setFormMessage(ui.adminLoginNoticeMessage, data?.message || 'URL de redireccion actualizada.', 'success');
+    } catch (error) {
+        setFormMessage(ui.adminLoginNoticeMessage, error.message || 'No fue posible actualizar la URL.', 'error');
     } finally {
         adminLoginRouteNoticeUpdateInProgress = false;
         setAdminLoginRouteNoticeButtonsBusy(false);
@@ -9735,9 +9768,9 @@ function resolveApiBase() {
 
     const host = String(window.location.hostname || '').trim().toLowerCase();
     const port = String(window.location.port || '').trim();
-    const protocol = String(window.location.protocol || '').trim().toLowerCase();
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1';
 
-    if (host && !host.includes(':') && port !== '3000' && protocol !== 'https:') {
+    if (isLocalHost && port !== '3000') {
         return `http://${host}:3000/api`;
     }
 
@@ -9757,8 +9790,6 @@ function resolveApiFallbackBases(primaryBase) {
     };
 
     const host = String(window.location.hostname || '').trim().toLowerCase();
-    const port = String(window.location.port || '').trim();
-    const protocol = String(window.location.protocol || '').trim().toLowerCase();
     const isLocalHost = host === 'localhost' || host === '127.0.0.1';
 
     if (isLocalHost) {
@@ -9771,10 +9802,6 @@ function resolveApiFallbackBases(primaryBase) {
     }
 
     appendCandidate('/api');
-
-    if (!isLocalHost && host && !host.includes(':') && port !== '3000' && protocol !== 'https:') {
-        appendCandidate(`http://${host}:3000/api`);
-    }
     return candidates;
 }
 
