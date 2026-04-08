@@ -411,6 +411,7 @@ let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
 let searchMatchCandidates = [];
 let selectedSearchMatchIngreso = '';
+let searchMatchCurrentPage = 1;
 let dateRangeAvailableBranches = [];
 let pendingMonthlyUtmStatus = null;
 let secretariaQuotationSummary = null;
@@ -431,6 +432,7 @@ let authLoginInProgress = false;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
 const REGISTRO_REQUIRED_FIELD_IDS = ['nombre', 'rut', 'region', 'comuna', 'rol'];
 const REGISTRO_INLINE_ERROR_FIELD_IDS = [...REGISTRO_REQUIRED_FIELD_IDS, 'correo', 'numLotes'];
+const SEARCH_MATCH_PAGE_SIZE = 12;
 const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
 const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto'];
 const EXISTING_RECORD_SAVE_WARNING =
@@ -719,6 +721,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         searchMatchModalOverlay: document.getElementById('searchMatchModalOverlay'),
         searchMatchResultsBody: document.getElementById('searchMatchResultsBody'),
         searchMatchMessage: document.getElementById('searchMatchMessage'),
+        searchMatchFirstBtn: document.getElementById('searchMatchFirstBtn'),
+        searchMatchPrevBtn: document.getElementById('searchMatchPrevBtn'),
+        searchMatchPageInfo: document.getElementById('searchMatchPageInfo'),
+        searchMatchNextBtn: document.getElementById('searchMatchNextBtn'),
+        searchMatchLastBtn: document.getElementById('searchMatchLastBtn'),
         searchMatchAcceptBtn: document.getElementById('searchMatchAcceptBtn'),
         searchMatchCancelBtn: document.getElementById('searchMatchCancelBtn')
     };
@@ -1136,6 +1143,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.searchMatchAcceptBtn) {
         ui.searchMatchAcceptBtn.addEventListener('click', () => void handleSearchMatchAcceptSelection());
+    }
+    if (ui.searchMatchFirstBtn) {
+        ui.searchMatchFirstBtn.addEventListener('click', () => handleSearchMatchGoToPage(1));
+    }
+    if (ui.searchMatchPrevBtn) {
+        ui.searchMatchPrevBtn.addEventListener('click', () => handleSearchMatchGoToPage(searchMatchCurrentPage - 1));
+    }
+    if (ui.searchMatchNextBtn) {
+        ui.searchMatchNextBtn.addEventListener('click', () => handleSearchMatchGoToPage(searchMatchCurrentPage + 1));
+    }
+    if (ui.searchMatchLastBtn) {
+        ui.searchMatchLastBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil((searchMatchCandidates.length || 0) / SEARCH_MATCH_PAGE_SIZE));
+            handleSearchMatchGoToPage(totalPages);
+        });
     }
     if (ui.searchMatchCancelBtn) {
         ui.searchMatchCancelBtn.addEventListener('click', closeSearchMatchModal);
@@ -3806,8 +3828,53 @@ function closeSearchMatchModal(options = {}) {
     if (!preserveResults) {
         selectedSearchMatchIngreso = '';
         searchMatchCandidates = [];
+        searchMatchCurrentPage = 1;
         renderSearchMatchResults([]);
     }
+}
+
+function updateSearchMatchPaginationControls(totalItems) {
+    if (!ui) {
+        return;
+    }
+
+    const safeTotalItems = Number.isInteger(totalItems) && totalItems > 0 ? totalItems : 0;
+    const totalPages = safeTotalItems > 0 ? Math.max(1, Math.ceil(safeTotalItems / SEARCH_MATCH_PAGE_SIZE)) : 1;
+    searchMatchCurrentPage = Math.min(Math.max(searchMatchCurrentPage, 1), totalPages);
+    const isEmpty = safeTotalItems === 0;
+    const isFirstPage = searchMatchCurrentPage <= 1;
+    const isLastPage = searchMatchCurrentPage >= totalPages;
+
+    if (ui.searchMatchPageInfo) {
+        ui.searchMatchPageInfo.textContent = isEmpty ? '0/0' : `${searchMatchCurrentPage}/${totalPages}`;
+    }
+    if (ui.searchMatchFirstBtn) {
+        ui.searchMatchFirstBtn.disabled = isEmpty || isFirstPage;
+    }
+    if (ui.searchMatchPrevBtn) {
+        ui.searchMatchPrevBtn.disabled = isEmpty || isFirstPage;
+    }
+    if (ui.searchMatchNextBtn) {
+        ui.searchMatchNextBtn.disabled = isEmpty || isLastPage;
+    }
+    if (ui.searchMatchLastBtn) {
+        ui.searchMatchLastBtn.disabled = isEmpty || isLastPage;
+    }
+}
+
+function handleSearchMatchGoToPage(targetPage) {
+    if (!Array.isArray(searchMatchCandidates) || searchMatchCandidates.length === 0) {
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(searchMatchCandidates.length / SEARCH_MATCH_PAGE_SIZE));
+    const safeTargetPage = Math.min(Math.max(Number(targetPage) || 1, 1), totalPages);
+    if (safeTargetPage === searchMatchCurrentPage) {
+        return;
+    }
+
+    searchMatchCurrentPage = safeTargetPage;
+    renderSearchMatchResults(searchMatchCandidates);
 }
 
 function renderSearchMatchResults(coincidencias) {
@@ -3815,13 +3882,19 @@ function renderSearchMatchResults(coincidencias) {
         return;
     }
 
+    const rows = Array.isArray(coincidencias) ? coincidencias : [];
+    updateSearchMatchPaginationControls(rows.length);
     ui.searchMatchResultsBody.innerHTML = '';
-    if (!Array.isArray(coincidencias) || coincidencias.length === 0) {
+    if (rows.length === 0) {
         ui.searchMatchResultsBody.innerHTML = '<tr><td colspan="4">Sin coincidencias para mostrar.</td></tr>';
         return;
     }
 
-    coincidencias.forEach((item, index) => {
+    const startIndex = (searchMatchCurrentPage - 1) * SEARCH_MATCH_PAGE_SIZE;
+    const pageRows = rows.slice(startIndex, startIndex + SEARCH_MATCH_PAGE_SIZE);
+
+    pageRows.forEach((item, pageIndex) => {
+        const index = startIndex + pageIndex;
         const numIngreso = String(item?.numIngreso || '').trim();
         const row = document.createElement('tr');
         row.classList.add('search-match-row');
@@ -3873,6 +3946,7 @@ function openSearchMatchModal(coincidencias, message = '') {
     }
 
     searchMatchCandidates = normalizedMatches;
+    searchMatchCurrentPage = 1;
     selectedSearchMatchIngreso = String(normalizedMatches[0].numIngreso || '').trim();
     renderSearchMatchResults(searchMatchCandidates);
     setFormMessage(

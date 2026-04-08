@@ -1176,7 +1176,7 @@
         <div class="modal-card search-match-modal-card" role="dialog" aria-modal="true" aria-labelledby="searchMatchModalTitle">
             <h3 id="searchMatchModalTitle">SELECCIONA EL REGISTRO CORRECTO</h3>
             <p class="helper-text">Se encontraron varios resultados. Elige el registro por ROL y nombre.</p>
-            <div class="history-wrapper">
+            <div class="history-wrapper search-match-table-wrapper">
                 <table class="history-table">
                     <thead>
                         <tr>
@@ -1193,16 +1193,25 @@
                     </tbody>
                 </table>
             </div>
-            <p id="searchMatchMessage" class="form-message" role="status" aria-live="polite"></p>
-            <div class="invoice-modal-actions">
-                <button type="button" id="searchMatchAcceptBtn" class="guardar">CARGAR REGISTRO</button>
-                <button type="button" id="searchMatchCancelBtn" class="limpiar">CANCELAR</button>
+            <div class="search-match-footer">
+                <div class="search-match-pagination" role="group" aria-label="Paginacion coincidencias">
+                    <button type="button" id="searchMatchFirstBtn" class="search-match-icon-btn" aria-label="Ir al inicio" title="Ir al inicio">|&lt;</button>
+                    <button type="button" id="searchMatchPrevBtn" class="search-match-icon-btn" aria-label="Pagina anterior" title="Pagina anterior">&lt;</button>
+                    <span id="searchMatchPageInfo" class="search-match-page-info">1/1</span>
+                    <button type="button" id="searchMatchNextBtn" class="search-match-icon-btn" aria-label="Pagina siguiente" title="Pagina siguiente">&gt;</button>
+                    <button type="button" id="searchMatchLastBtn" class="search-match-icon-btn" aria-label="Ir al final" title="Ir al final">&gt;|</button>
+                </div>
+                <p id="searchMatchMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="invoice-modal-actions search-match-actions">
+                    <button type="button" id="searchMatchAcceptBtn" class="guardar">CARGAR REGISTRO</button>
+                    <button type="button" id="searchMatchCancelBtn" class="limpiar">CANCELAR</button>
+                </div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="../../script.js?v=20260408-10"></script>
+    <script src="../../script.js?v=20260408-11"></script>
 </body>
 </html>

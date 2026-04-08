@@ -963,6 +963,70 @@ button {
 
 .search-match-modal-card {
     width: min(920px, 100%);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: 90vh;
+}
+
+.search-match-table-wrapper {
+    flex: 1 1 auto;
+    min-height: 220px;
+    max-height: 52vh;
+    overflow-y: auto;
+}
+
+.search-match-footer {
+    flex: 0 0 auto;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #8fa6c9;
+    background: #b6c7e3;
+}
+
+.search-match-pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.search-match-icon-btn {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    flex: 0 0 auto;
+    border: 1px solid #8fa6c9;
+    border-radius: 6px;
+    background: #eef3fb;
+    color: #2a3d6b;
+    font-size: 0.9em;
+    font-weight: 700;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+}
+
+.search-match-icon-btn:hover:not(:disabled) {
+    background: #dbe6f6;
+}
+
+.search-match-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.search-match-page-info {
+    min-width: 72px;
+    text-align: center;
+    font-size: 0.85em;
+    font-weight: 700;
+    color: #2a3d6b;
+}
+
+.search-match-actions {
+    margin-top: 8px;
 }
 
 .secretary-followup-modal-card {
@@ -1188,6 +1252,16 @@ button {
 
     .invoice-modal-actions {
         flex-direction: column;
+    }
+
+    .search-match-table-wrapper {
+        max-height: 45vh;
+    }
+
+    .search-match-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
     }
 
     .secretary-followup-filter-actions {
