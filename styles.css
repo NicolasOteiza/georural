@@ -961,7 +961,15 @@ button {
     width: 100%;
 }
 
-.date-range-modal-card,
+.date-range-modal-card {
+    width: min(920px, 100%);
+    display: flex;
+    flex-direction: column;
+    height: min(90vh, 840px);
+    max-height: 90vh;
+    overflow-y: hidden;
+}
+
 .search-match-modal-card {
     width: min(920px, 100%);
     display: flex;
@@ -970,7 +978,12 @@ button {
     max-height: 90vh;
 }
 
-.date-range-table-wrapper,
+.date-range-table-wrapper {
+    flex: 1 1 auto;
+    min-height: 220px;
+    overflow-y: auto;
+}
+
 .search-match-table-wrapper {
     flex: 1 1 auto;
     min-height: 220px;
@@ -985,6 +998,12 @@ button {
     padding-top: 8px;
     border-top: 1px solid #8fa6c9;
     background: #b6c7e3;
+}
+
+.date-range-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
 }
 
 .date-range-pagination,
@@ -1263,7 +1282,10 @@ button {
         flex-direction: column;
     }
 
-    .date-range-table-wrapper,
+    .date-range-table-wrapper {
+        max-height: none;
+    }
+
     .search-match-table-wrapper {
         max-height: 45vh;
     }

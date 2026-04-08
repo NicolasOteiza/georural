@@ -410,6 +410,8 @@ let secretaryNoMovementRecords = [];
 let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
 let dateRangeCurrentPage = 1;
+let dateRangePageSize = 6;
+let dateRangeResizeTimerId = 0;
 let searchMatchCandidates = [];
 let selectedSearchMatchIngreso = '';
 let searchMatchCurrentPage = 1;
@@ -433,7 +435,9 @@ let authLoginInProgress = false;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
 const REGISTRO_REQUIRED_FIELD_IDS = ['nombre', 'rut', 'region', 'comuna', 'rol'];
 const REGISTRO_INLINE_ERROR_FIELD_IDS = [...REGISTRO_REQUIRED_FIELD_IDS, 'correo', 'numLotes'];
-const DATE_RANGE_PAGE_SIZE = 15;
+const DATE_RANGE_MIN_PAGE_SIZE = 6;
+const DATE_RANGE_FALLBACK_PAGE_SIZE = 10;
+const DATE_RANGE_MAX_PAGE_SIZE = 40;
 const SEARCH_MATCH_PAGE_SIZE = 12;
 const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
 const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto'];
@@ -715,6 +719,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         dateRangeSucursal: document.getElementById('dateRangeSucursal'),
         dateRangeRegion: document.getElementById('dateRangeRegion'),
         dateRangeComuna: document.getElementById('dateRangeComuna'),
+        dateRangeTableWrapper: document.getElementById('dateRangeTableWrapper'),
         dateRangeResultsBody: document.getElementById('dateRangeResultsBody'),
         dateRangeMessage: document.getElementById('dateRangeMessage'),
         dateRangeExportBtn: document.getElementById('dateRangeExportBtn'),
@@ -1152,7 +1157,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.dateRangeLastBtn) {
         ui.dateRangeLastBtn.addEventListener('click', () => {
-            const totalPages = Math.max(1, Math.ceil((dateRangeMatches.length || 0) / DATE_RANGE_PAGE_SIZE));
+            const pageSize = getDateRangePageSize();
+            const totalPages = Math.max(1, Math.ceil((dateRangeMatches.length || 0) / pageSize));
             handleDateRangeGoToPage(totalPages);
         });
     }
@@ -1163,6 +1169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
+    window.addEventListener('resize', scheduleDateRangeLayoutRefresh);
     if (ui.searchMatchAcceptBtn) {
         ui.searchMatchAcceptBtn.addEventListener('click', () => void handleSearchMatchAcceptSelection());
     }
@@ -3761,6 +3768,11 @@ function closeDateRangeModal(options = {}) {
         return;
     }
 
+    if (dateRangeResizeTimerId) {
+        window.clearTimeout(dateRangeResizeTimerId);
+        dateRangeResizeTimerId = 0;
+    }
+
     const preserveResults = Boolean(options.preserveResults);
     ui.dateRangeModalOverlay.classList.add('hidden');
     setFormMessage(ui.dateRangeMessage, '', '');
@@ -3768,6 +3780,7 @@ function closeDateRangeModal(options = {}) {
         selectedDateRangeIngreso = '';
         dateRangeMatches = [];
         dateRangeCurrentPage = 1;
+        dateRangePageSize = DATE_RANGE_FALLBACK_PAGE_SIZE;
         if (ui && ui.dateRangeSucursal) {
             ui.dateRangeSucursal.value = '';
         }
@@ -3792,13 +3805,62 @@ function updateDateRangeExportButtonState(registros) {
     ui.dateRangeExportBtn.disabled = !hasResults;
 }
 
+function getDateRangePageSize() {
+    const safePageSize = Number.isInteger(dateRangePageSize) ? dateRangePageSize : 0;
+    const normalized = safePageSize > 0 ? safePageSize : DATE_RANGE_FALLBACK_PAGE_SIZE;
+    return Math.min(DATE_RANGE_MAX_PAGE_SIZE, Math.max(DATE_RANGE_MIN_PAGE_SIZE, normalized));
+}
+
+function recalculateDateRangePageSize() {
+    if (!ui || !ui.dateRangeTableWrapper) {
+        dateRangePageSize = DATE_RANGE_FALLBACK_PAGE_SIZE;
+        return;
+    }
+
+    const wrapperHeight = ui.dateRangeTableWrapper.clientHeight;
+    if (!Number.isFinite(wrapperHeight) || wrapperHeight <= 0) {
+        dateRangePageSize = DATE_RANGE_FALLBACK_PAGE_SIZE;
+        return;
+    }
+
+    const tableHeader = ui.dateRangeTableWrapper.querySelector('thead');
+    const tableHeaderHeight = tableHeader ? tableHeader.getBoundingClientRect().height : 0;
+    const sampleRow = ui.dateRangeTableWrapper.querySelector('#dateRangeResultsBody tr');
+    const sampleRowHeight = sampleRow ? sampleRow.getBoundingClientRect().height : 0;
+    const rowHeight = sampleRowHeight > 0 ? sampleRowHeight : 38;
+    const availableBodyHeight = Math.max(wrapperHeight - tableHeaderHeight - 2, rowHeight);
+    const computedRows = Math.floor(availableBodyHeight / rowHeight);
+    const normalizedRows = computedRows > 0 ? computedRows : DATE_RANGE_FALLBACK_PAGE_SIZE;
+    dateRangePageSize = Math.min(DATE_RANGE_MAX_PAGE_SIZE, Math.max(DATE_RANGE_MIN_PAGE_SIZE, normalizedRows));
+}
+
+function scheduleDateRangeLayoutRefresh() {
+    if (dateRangeResizeTimerId) {
+        window.clearTimeout(dateRangeResizeTimerId);
+    }
+
+    dateRangeResizeTimerId = window.setTimeout(() => {
+        dateRangeResizeTimerId = 0;
+        if (!ui || !ui.dateRangeModalOverlay || ui.dateRangeModalOverlay.classList.contains('hidden')) {
+            return;
+        }
+
+        const previousPageSize = getDateRangePageSize();
+        recalculateDateRangePageSize();
+        if (previousPageSize !== getDateRangePageSize() && Array.isArray(dateRangeMatches) && dateRangeMatches.length > 0) {
+            renderDateRangeResults(dateRangeMatches);
+        }
+    }, 120);
+}
+
 function updateDateRangePaginationControls(totalItems) {
     if (!ui) {
         return;
     }
 
     const safeTotalItems = Number.isInteger(totalItems) && totalItems > 0 ? totalItems : 0;
-    const totalPages = safeTotalItems > 0 ? Math.max(1, Math.ceil(safeTotalItems / DATE_RANGE_PAGE_SIZE)) : 1;
+    const pageSize = getDateRangePageSize();
+    const totalPages = safeTotalItems > 0 ? Math.max(1, Math.ceil(safeTotalItems / pageSize)) : 1;
     dateRangeCurrentPage = Math.min(Math.max(dateRangeCurrentPage, 1), totalPages);
     const isEmpty = safeTotalItems === 0;
     const isFirstPage = dateRangeCurrentPage <= 1;
@@ -3826,7 +3888,8 @@ function handleDateRangeGoToPage(targetPage) {
         return;
     }
 
-    const totalPages = Math.max(1, Math.ceil(dateRangeMatches.length / DATE_RANGE_PAGE_SIZE));
+    const pageSize = getDateRangePageSize();
+    const totalPages = Math.max(1, Math.ceil(dateRangeMatches.length / pageSize));
     const safeTargetPage = Math.min(Math.max(Number(targetPage) || 1, 1), totalPages);
     if (safeTargetPage === dateRangeCurrentPage) {
         return;
@@ -3842,6 +3905,8 @@ function renderDateRangeResults(registros) {
     }
 
     const rows = Array.isArray(registros) ? registros : [];
+    recalculateDateRangePageSize();
+    const pageSize = getDateRangePageSize();
     updateDateRangeExportButtonState(rows);
     updateDateRangePaginationControls(rows.length);
     ui.dateRangeResultsBody.innerHTML = '';
@@ -3850,8 +3915,8 @@ function renderDateRangeResults(registros) {
         return;
     }
 
-    const startIndex = (dateRangeCurrentPage - 1) * DATE_RANGE_PAGE_SIZE;
-    const pageRows = rows.slice(startIndex, startIndex + DATE_RANGE_PAGE_SIZE);
+    const startIndex = (dateRangeCurrentPage - 1) * pageSize;
+    const pageRows = rows.slice(startIndex, startIndex + pageSize);
 
     pageRows.forEach((registro, pageIndex) => {
         const index = startIndex + pageIndex;
@@ -4108,8 +4173,10 @@ async function handleOpenDateRangeModal() {
     selectedDateRangeIngreso = '';
     dateRangeMatches = [];
     dateRangeCurrentPage = 1;
+    dateRangePageSize = DATE_RANGE_FALLBACK_PAGE_SIZE;
     renderDateRangeResults([]);
     ui.dateRangeModalOverlay.classList.remove('hidden');
+    scheduleDateRangeLayoutRefresh();
 }
 
 async function handleDateRangeSearch(event) {
@@ -4154,6 +4221,7 @@ async function handleDateRangeSearch(event) {
         dateRangeCurrentPage = 1;
         selectedDateRangeIngreso = registros.length === 1 ? String(registros[0].numIngreso || '') : '';
         renderDateRangeResults(registros);
+        scheduleDateRangeLayoutRefresh();
         setFormMessage(
             ui.dateRangeMessage,
             registros.length > 0
