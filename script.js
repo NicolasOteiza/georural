@@ -405,6 +405,7 @@ let invoiceModalMode = '';
 let invoiceEmailPromptState = null;
 let editingHistoryEntryId = null;
 let editingHistoryIngreso = '';
+let editingHistoryAction = '';
 let secretaryNoMovementRecords = [];
 let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
@@ -683,6 +684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         historyEditFecha: document.getElementById('historyEditFecha'),
         historyEditComentario: document.getElementById('historyEditComentario'),
         historyEditMessage: document.getElementById('historyEditMessage'),
+        historyEditDeleteBtn: document.getElementById('historyEditDeleteBtn'),
         historyEditCancelBtn: document.getElementById('historyEditCancelBtn'),
         historyEditSaveBtn: document.getElementById('historyEditSaveBtn'),
         secretaryNoMovementOverlay: document.getElementById('secretaryNoMovementOverlay'),
@@ -711,6 +713,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         dateRangeComuna: document.getElementById('dateRangeComuna'),
         dateRangeResultsBody: document.getElementById('dateRangeResultsBody'),
         dateRangeMessage: document.getElementById('dateRangeMessage'),
+        dateRangeExportBtn: document.getElementById('dateRangeExportBtn'),
         dateRangeAcceptBtn: document.getElementById('dateRangeAcceptBtn'),
         dateRangeCancelBtn: document.getElementById('dateRangeCancelBtn'),
         searchMatchModalOverlay: document.getElementById('searchMatchModalOverlay'),
@@ -1037,6 +1040,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (ui.historyEditForm) {
         ui.historyEditForm.addEventListener('submit', (event) => void handleHistoryEditSubmit(event));
     }
+    if (ui.historyEditDeleteBtn) {
+        ui.historyEditDeleteBtn.addEventListener('click', () => void handleHistoryDeleteClick());
+    }
     if (ui.historyEditModalOverlay) {
         ui.historyEditModalOverlay.addEventListener('click', (event) => {
             if (event.target === ui.historyEditModalOverlay) {
@@ -1114,6 +1120,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.dateRangeAcceptBtn) {
         ui.dateRangeAcceptBtn.addEventListener('click', () => void handleDateRangeAcceptSelection());
+    }
+    if (ui.dateRangeExportBtn) {
+        ui.dateRangeExportBtn.addEventListener('click', () => void handleDateRangeExportWorkbook());
     }
     if (ui.dateRangeCancelBtn) {
         ui.dateRangeCancelBtn.addEventListener('click', closeDateRangeModal);
@@ -2109,7 +2118,7 @@ function canCommentRegistros(user) {
 }
 
 function normalizeUserRole(roleValue) {
-    const role = String(roleValue || '').toUpperCase();
+    const role = String(roleValue || '').trim().toUpperCase();
     if (role === 'SUPER') {
         return 'SUPER';
     }
@@ -3724,7 +3733,18 @@ function closeDateRangeModal(options = {}) {
             populateComunas(ui.dateRangeComuna, '', '', 'TODAS');
         }
         renderDateRangeResults([]);
+        updateDateRangeExportButtonState([]);
     }
+}
+
+function updateDateRangeExportButtonState(registros) {
+    if (!ui || !ui.dateRangeExportBtn) {
+        return;
+    }
+
+    const hasResults = Array.isArray(registros) && registros.length > 0;
+    ui.dateRangeExportBtn.classList.toggle('hidden', !hasResults);
+    ui.dateRangeExportBtn.disabled = !hasResults;
 }
 
 function renderDateRangeResults(registros) {
@@ -3732,6 +3752,7 @@ function renderDateRangeResults(registros) {
         return;
     }
 
+    updateDateRangeExportButtonState(registros);
     ui.dateRangeResultsBody.innerHTML = '';
     if (!Array.isArray(registros) || registros.length === 0) {
         ui.dateRangeResultsBody.innerHTML = '<tr><td colspan="8">Sin resultados para mostrar.</td></tr>';
@@ -3993,6 +4014,197 @@ async function handleDateRangeSearch(event) {
         );
     } catch (error) {
         setFormMessage(ui.dateRangeMessage, error.message, 'error');
+    }
+}
+
+function formatEstadoForExport(value) {
+    const normalized = normalizeEstadoValue(value);
+    if (normalized === 'facturada') {
+        return 'FACTURADA';
+    }
+    if (normalized === 'no_facturada') {
+        return 'NO FACTURADA';
+    }
+    return String(normalized || '').toUpperCase();
+}
+
+function buildDateRangeExportRows(registros) {
+    if (!Array.isArray(registros)) {
+        return [];
+    }
+
+    return registros.map((registro, index) => [
+        String(index + 1),
+        normalizeText(registro?.numIngreso),
+        formatDateTime(registro?.createdAt),
+        normalizeText(registro?.nombre),
+        normalizeText(registro?.rut),
+        normalizeText(registro?.rol),
+        normalizeText(registro?.telefono),
+        normalizeText(registro?.correo),
+        normalizeText(registro?.region),
+        normalizeText(registro?.comuna),
+        normalizeText(registro?.sucursal),
+        formatEstadoForExport(registro?.estado)
+    ]);
+}
+
+function buildDateRangeExportFileName(extension = 'xlsx') {
+    const safeExtension = String(extension || '').trim().toLowerCase() === 'xls' ? 'xls' : 'xlsx';
+    const from = String(ui?.dateRangeFrom?.value || '').trim().replace(/-/g, '');
+    const to = String(ui?.dateRangeTo?.value || '').trim().replace(/-/g, '');
+    if (from && to) {
+        return `registros_${from}_${to}.${safeExtension}`;
+    }
+    const now = new Date();
+    const fallback = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    return `registros_${fallback}.${safeExtension}`;
+}
+
+function triggerBrowserDownload(linkHref, fileName) {
+    const link = document.createElement('a');
+    link.href = linkHref;
+    link.download = fileName;
+    link.rel = 'noopener';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function downloadBlobFile(blob, fileName) {
+    const browserNavigator = window.navigator || {};
+    if (typeof browserNavigator.msSaveOrOpenBlob === 'function') {
+        browserNavigator.msSaveOrOpenBlob(blob, fileName);
+        return;
+    }
+
+    const urlApi = window.URL || window.webkitURL;
+    if (!urlApi || typeof urlApi.createObjectURL !== 'function') {
+        throw new Error('El navegador no soporta descarga de archivos.');
+    }
+
+    const objectUrl = urlApi.createObjectURL(blob);
+    try {
+        triggerBrowserDownload(objectUrl, fileName);
+    } finally {
+        urlApi.revokeObjectURL(objectUrl);
+    }
+}
+
+async function exportDateRangeWorkbookAsXlsxTable(registros) {
+    const excelJsLib = window && window.ExcelJS;
+    if (!excelJsLib || typeof excelJsLib.Workbook !== 'function') {
+        throw new Error('No se pudo cargar la libreria de tabla Excel.');
+    }
+
+    const headers = ['#', 'NRO INGRESO', 'FECHA REGISTRO', 'NOMBRE', 'RUT', 'ROL', 'TELEFONO', 'CORREO', 'REGION', 'COMUNA', 'SUCURSAL', 'ESTADO'];
+    const rows = buildDateRangeExportRows(registros).map((rowValues) => rowValues.map((value) => String(value ?? '')));
+    const columnWidths = [6, 14, 20, 40, 16, 16, 15, 35, 20, 20, 20, 14];
+
+    const workbook = new excelJsLib.Workbook();
+    workbook.creator = 'Geo Rural';
+    workbook.created = new Date();
+    const worksheet = workbook.addWorksheet('Registros', {
+        views: [{ state: 'frozen', ySplit: 1 }]
+    });
+
+    worksheet.columns = headers.map((name, index) => ({
+        header: name,
+        key: `c${index + 1}`,
+        width: columnWidths[index]
+    }));
+
+    worksheet.addTable({
+        name: 'TablaRegistros',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: {
+            theme: 'TableStyleMedium2',
+            showRowStripes: true
+        },
+        columns: headers.map((name) => ({ name })),
+        rows
+    });
+
+    worksheet.eachRow((row, rowNumber) => {
+        row.eachCell((cell) => {
+            cell.alignment = { vertical: 'middle' };
+            if (rowNumber === 1) {
+                cell.font = { bold: true };
+            }
+        });
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+    downloadBlobFile(blob, buildDateRangeExportFileName('xlsx'));
+}
+
+function exportDateRangeWorkbookAsXls(registros) {
+    const xlsxLib = window && window.XLSX;
+    if (!xlsxLib || !xlsxLib.utils || typeof xlsxLib.writeFile !== 'function') {
+        throw new Error('No se pudo cargar la libreria de exportacion Excel.');
+    }
+
+    const headers = ['#', 'NRO INGRESO', 'FECHA REGISTRO', 'NOMBRE', 'RUT', 'ROL', 'TELEFONO', 'CORREO', 'REGION', 'COMUNA', 'SUCURSAL', 'ESTADO'];
+    const rows = buildDateRangeExportRows(registros);
+    const worksheetData = [headers, ...rows];
+    const worksheet = xlsxLib.utils.aoa_to_sheet(worksheetData);
+
+    worksheet['!cols'] = [
+        { wch: 6 },
+        { wch: 14 },
+        { wch: 20 },
+        { wch: 40 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 15 },
+        { wch: 35 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 14 }
+    ];
+
+    const lastCol = xlsxLib.utils.encode_col(headers.length - 1);
+    const lastRow = rows.length + 1;
+    worksheet['!autofilter'] = { ref: `A1:${lastCol}${lastRow}` };
+
+    const workbook = xlsxLib.utils.book_new();
+    xlsxLib.utils.book_append_sheet(workbook, worksheet, 'Registros');
+    xlsxLib.writeFile(workbook, buildDateRangeExportFileName('xls'), {
+        bookType: 'xls',
+        compression: true
+    });
+}
+
+async function handleDateRangeExportWorkbook() {
+    const registros = Array.isArray(dateRangeMatches) ? dateRangeMatches : [];
+    if (registros.length === 0) {
+        setFormMessage(ui?.dateRangeMessage, 'No hay resultados para exportar.', 'error');
+        return;
+    }
+
+    try {
+        const canExportAsExcelTable = Boolean(window && window.ExcelJS && typeof window.ExcelJS.Workbook === 'function');
+        if (canExportAsExcelTable) {
+            await exportDateRangeWorkbookAsXlsxTable(registros);
+        } else {
+            exportDateRangeWorkbookAsXls(registros);
+        }
+        setFormMessage(ui?.dateRangeMessage, `Se exportaron ${registros.length} registros en Excel.`, 'success');
+    } catch (error) {
+        const reason = normalizeText(error?.message || '');
+        console.error('[Excel Export] Error al exportar rango de fechas:', error);
+        setFormMessage(
+            ui?.dateRangeMessage,
+            reason ? `No fue posible generar el archivo Excel: ${reason}` : 'No fue posible generar el archivo Excel.',
+            'error'
+        );
     }
 }
 
@@ -9396,6 +9608,10 @@ function closeHistoryEditModal() {
     setFormMessage(ui?.historyEditMessage, '', '');
     editingHistoryEntryId = null;
     editingHistoryIngreso = '';
+    editingHistoryAction = '';
+    if (ui?.historyEditDeleteBtn) {
+        ui.historyEditDeleteBtn.classList.add('hidden');
+    }
 }
 
 function openHistoryEditModal(historyItem) {
@@ -9411,10 +9627,6 @@ function openHistoryEditModal(historyItem) {
         setFormMessage(ui?.formMessage, 'No fue posible abrir este comentario para edicion.', 'error');
         return;
     }
-    if (actionLabel !== 'COMENTARIO') {
-        setFormMessage(ui?.formMessage, 'Solo se pueden editar entradas de tipo COMENTARIO.', 'error');
-        return;
-    }
     if (!ui?.historyEditModalOverlay || !ui?.historyEditFecha || !ui?.historyEditComentario) {
         return;
     }
@@ -9427,8 +9639,13 @@ function openHistoryEditModal(historyItem) {
 
     editingHistoryEntryId = historyId;
     editingHistoryIngreso = targetIngreso;
+    editingHistoryAction = actionLabel;
     ui.historyEditFecha.value = localDateTime;
     ui.historyEditComentario.value = formatComentarioTitleCase(String(historyItem?.comentario || '')).trim();
+    if (ui.historyEditDeleteBtn) {
+        const showDeleteBtn = isSuperUser(currentUser);
+        ui.historyEditDeleteBtn.classList.toggle('hidden', !showDeleteBtn);
+    }
     setFormMessage(ui?.historyEditMessage, '', '');
     ui.historyEditModalOverlay.classList.remove('hidden');
     window.requestAnimationFrame(() => {
@@ -9490,6 +9707,47 @@ async function handleHistoryEditSubmit(event) {
     }
 }
 
+async function handleHistoryDeleteClick() {
+    if (!isSuperUser(currentUser)) {
+        setFormMessage(ui?.historyEditMessage, 'Solo SUPER puede eliminar comentarios del historial.', 'error');
+        return;
+    }
+
+    const historyId = Number(editingHistoryEntryId);
+    const targetIngreso = String(editingHistoryIngreso || loadedIngresoOriginal || '').trim();
+    const actionLabel = String(editingHistoryAction || '').trim().toUpperCase();
+    if (!Number.isInteger(historyId) || historyId <= 0 || !targetIngreso) {
+        setFormMessage(ui?.historyEditMessage, 'No se encontro el comentario seleccionado para eliminar.', 'error');
+        return;
+    }
+    const label = actionLabel || 'ENTRADA';
+    const confirmDelete = window.confirm(`Se eliminara esta entrada del historial (${label}). Esta accion no se puede deshacer. Deseas continuar?`);
+    if (!confirmDelete) {
+        return;
+    }
+
+    try {
+        await apiRequest(`/registros/${encodeURIComponent(targetIngreso)}/historial/${encodeURIComponent(historyId)}`, {
+            method: 'DELETE'
+        });
+
+        try {
+            await loadHistoryForIngreso(targetIngreso);
+            closeHistoryEditModal();
+            setFormMessage(ui?.formMessage, 'Comentario eliminado correctamente del historial.', 'success');
+        } catch (refreshError) {
+            closeHistoryEditModal();
+            setFormMessage(
+                ui?.formMessage,
+                `Comentario eliminado, pero no se pudo recargar el historial: ${refreshError.message}`,
+                'error'
+            );
+        }
+    } catch (error) {
+        setFormMessage(ui?.historyEditMessage, error.message, 'error');
+    }
+}
+
 function renderHistory(historial) {
     if (!ui || !ui.historialBody) {
         return;
@@ -9508,7 +9766,25 @@ function renderHistory(historial) {
         return;
     }
 
-    historial.forEach((item) => {
+    const sortedHistory = [...historial].sort((left, right) => {
+        const leftTime = parseDateValue(left?.fecha)?.getTime() || 0;
+        const rightTime = parseDateValue(right?.fecha)?.getTime() || 0;
+        if (rightTime !== leftTime) {
+            return rightTime - leftTime;
+        }
+
+        const leftPriority = String(left?.accion || '').trim().toUpperCase() === 'COMENTARIO' ? 0 : 1;
+        const rightPriority = String(right?.accion || '').trim().toUpperCase() === 'COMENTARIO' ? 0 : 1;
+        if (leftPriority !== rightPriority) {
+            return leftPriority - rightPriority;
+        }
+
+        const leftId = Number(left?.id || 0);
+        const rightId = Number(right?.id || 0);
+        return rightId - leftId;
+    });
+
+    sortedHistory.forEach((item) => {
         const row = document.createElement('tr');
 
         const fechaCell = document.createElement('td');
@@ -9516,16 +9792,6 @@ function renderHistory(historial) {
 
         const comentarioCell = document.createElement('td');
         comentarioCell.textContent = item.comentario || '';
-        if (canManageHistory && Boolean(item?.editado)) {
-            const editedBy = normalizeInvoiceText(item?.editadoPor, 120);
-            const editedAt = formatDateTime(item?.editadoEn);
-            const meta = document.createElement('div');
-            meta.className = 'helper-text';
-            meta.textContent = editedBy
-                ? `Modificado por ${editedBy}${editedAt ? ` el ${editedAt}` : ''}.`
-                : 'Modificado por administrador.';
-            comentarioCell.appendChild(meta);
-        }
 
         const usuarioCell = document.createElement('td');
         usuarioCell.textContent = item.usuario || '';
@@ -9535,7 +9801,7 @@ function renderHistory(historial) {
         row.appendChild(usuarioCell);
         if (canManageHistory) {
             const actionCell = document.createElement('td');
-            const canEditEntry = String(item?.accion || '').toUpperCase() === 'COMENTARIO';
+            const canEditEntry = Number.isInteger(Number(item?.id)) && Number(item?.id) > 0;
             if (canEditEntry) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
@@ -9567,6 +9833,10 @@ function formatDateTime(value) {
         second: '2-digit',
         hour12: false
     });
+}
+
+function normalizeText(value) {
+    return String(value ?? '').trim();
 }
 
 function normalizeEstadoValue(value) {

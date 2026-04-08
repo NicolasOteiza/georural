@@ -994,6 +994,7 @@
                 </div>
                 <p id="historyEditMessage" class="form-message" role="status" aria-live="polite"></p>
                 <div class="invoice-modal-actions">
+                    <button type="button" id="historyEditDeleteBtn" class="limpiar hidden">ELIMINAR COMENTARIO</button>
                     <button type="button" id="historyEditCancelBtn" class="limpiar">CANCELAR</button>
                     <button type="submit" id="historyEditSaveBtn" class="guardar">GUARDAR CAMBIOS</button>
                 </div>
@@ -1164,6 +1165,7 @@
             </div>
             <p id="dateRangeMessage" class="form-message" role="status" aria-live="polite"></p>
             <div class="invoice-modal-actions">
+                <button type="button" id="dateRangeExportBtn" class="buscar hidden">EXPORTAR EXCEL</button>
                 <button type="button" id="dateRangeAcceptBtn" class="guardar">CARGAR REGISTRO</button>
                 <button type="button" id="dateRangeCancelBtn" class="limpiar">CANCELAR</button>
             </div>
@@ -1199,6 +1201,8 @@
         </div>
     </div>
 
-    <script src="../../script.js?v=20260401-07"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="../../script.js?v=20260408-10"></script>
 </body>
 </html>

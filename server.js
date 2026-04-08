@@ -2219,11 +2219,6 @@ function toFacturaSolicitudRow(row) {
 function toHistoryRow(row) {
     const createdAt = toApiDateTimeLocal(row.created_at);
     const usuario = row.sucursal ? `${row.usuario_nombre} (${row.sucursal})` : row.usuario_nombre;
-    const editedAt = toApiDateTimeLocal(row.editado_at);
-    const editedByName = normalizeText(row.editado_por);
-    const editedByBranch = normalizeText(row.editado_por_sucursal);
-    const editedBy = editedByBranch ? `${editedByName} (${editedByBranch})` : editedByName;
-    const wasEdited = Number(row.editado || 0) === 1 || Boolean(editedAt) || Boolean(editedBy);
 
     return {
         id: Number(row.id || 0),
@@ -2231,10 +2226,7 @@ function toHistoryRow(row) {
         accion: normalizeText(row.accion || ''),
         fecha: createdAt,
         comentario: row.comentario,
-        usuario: usuario || 'Sin usuario',
-        editado: wasEdited,
-        editadoPor: editedBy || '',
-        editadoEn: editedAt
+        usuario: usuario || 'Sin usuario'
     };
 }
 
@@ -4814,7 +4806,9 @@ async function fetchHistoryByRegistroId(registroId) {
                 editado_at
             FROM registro_historial
             WHERE registro_id = ?
-            ORDER BY created_at DESC, id DESC
+            ORDER BY created_at DESC,
+                     CASE WHEN UPPER(accion) = 'COMENTARIO' THEN 0 ELSE 1 END ASC,
+                     id DESC
         `,
         [registroId]
     );
@@ -7961,7 +7955,7 @@ app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, r
         const registroId = Number(recordRows[0].id);
         const [historyRows] = await connection.execute(
             `
-                SELECT id, accion
+                SELECT id
                 FROM registro_historial
                 WHERE id = ? AND registro_id = ?
                 FOR UPDATE
@@ -7973,25 +7967,19 @@ app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, r
             return res.status(404).json({ message: 'No existe ese comentario en el historial de progreso.' });
         }
 
-        const action = normalizeText(historyRows[0].accion).toUpperCase();
-        if (action !== 'COMENTARIO') {
-            await connection.rollback();
-            return res.status(400).json({ message: 'Solo se pueden editar entradas de tipo COMENTARIO.' });
-        }
-
         await connection.execute(
             `
                 UPDATE registro_historial
                 SET
                     comentario = ?,
                     created_at = ?,
-                    editado = 1,
-                    editado_por = ?,
-                    editado_por_sucursal = ?,
-                    editado_at = NOW()
+                    editado = 0,
+                    editado_por = NULL,
+                    editado_por_sucursal = NULL,
+                    editado_at = NULL
                 WHERE id = ?
             `,
-            [comentario, fechaSql, adminName, adminBranch, historyId]
+            [comentario, fechaSql, historyId]
         );
 
         const [latestCommentRows] = await connection.execute(
@@ -8049,6 +8037,100 @@ app.put('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, r
         await connection.rollback();
         console.error(error);
         return res.status(500).json({ message: 'No fue posible actualizar el comentario del historial de progreso.' });
+    } finally {
+        connection.release();
+    }
+});
+
+app.delete('/api/registros/:numIngreso/historial/:historyId', requireWriteAccess, requireSuper, async (req, res) => {
+    const routeIngreso = normalizeText(decodeURIComponent(req.params.numIngreso));
+    const parsedIngreso = parseNumIngreso(routeIngreso);
+    if (!parsedIngreso) {
+        return res.status(400).json({ message: 'NRO INGRESO invalido.' });
+    }
+
+    const historyIdRaw = Number(req.params.historyId);
+    const historyId = Number.isSafeInteger(historyIdRaw) ? historyIdRaw : NaN;
+    if (!Number.isInteger(historyId) || historyId <= 0) {
+        return res.status(400).json({ message: 'Identificador de comentario invalido.' });
+    }
+
+    const registroScope = getRegistroAccessScope(req.authUser);
+    if (registroScope.denied) {
+        return res.status(403).json({ message: 'No tienes permisos para operar registros sin sucursal asignada.' });
+    }
+
+    const connection = await pool.getConnection();
+    const superName = req.authUser.nombre || req.authUser.username;
+    const superBranch = normalizeText(req.authUser.sucursal) || null;
+
+    try {
+        await connection.beginTransaction();
+
+        const recordScopeWhere = registroScope.clause ? ` AND ${registroScope.clause}` : '';
+        const [recordRows] = await connection.execute(
+            `
+                SELECT id, num_ingreso
+                FROM registros
+                WHERE num_ingreso = ?${recordScopeWhere}
+                FOR UPDATE
+            `,
+            [routeIngreso, ...registroScope.params]
+        );
+        if (!recordRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese registro para eliminar comentarios.' });
+        }
+
+        const registroId = Number(recordRows[0].id);
+        const [historyRows] = await connection.execute(
+            `
+                SELECT id, accion
+                FROM registro_historial
+                WHERE id = ? AND registro_id = ?
+                FOR UPDATE
+            `,
+            [historyId, registroId]
+        );
+        if (!historyRows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'No existe ese comentario en el historial de progreso.' });
+        }
+
+        await connection.execute('DELETE FROM registro_historial WHERE id = ? LIMIT 1', [historyId]);
+
+        const [latestCommentRows] = await connection.execute(
+            `
+                SELECT comentario
+                FROM registro_historial
+                WHERE registro_id = ? AND accion = 'COMENTARIO'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            `,
+            [registroId]
+        );
+        const updatedComment = latestCommentRows.length > 0 ? normalizeText(latestCommentRows[0].comentario) : '';
+        await connection.execute(
+            `
+                UPDATE registros
+                SET
+                    comentario = ?,
+                    updated_by = ?,
+                    updated_by_sucursal = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            `,
+            [updatedComment || null, superName, superBranch, registroId]
+        );
+
+        await connection.commit();
+        return res.json({
+            message: 'Comentario eliminado correctamente del historial de progreso.'
+        });
+    } catch (error) {
+        await connection.rollback();
+        console.error(error);
+        return res.status(500).json({ message: 'No fue posible eliminar el comentario del historial de progreso.' });
     } finally {
         connection.release();
     }
@@ -8357,6 +8439,8 @@ app.get('/api/registros/buscar-rango-fechas', async (req, res) => {
                     nombre,
                     rut,
                     rol,
+                    telefono,
+                    correo,
                     region,
                     comuna,
                     estado,
@@ -8376,6 +8460,8 @@ app.get('/api/registros/buscar-rango-fechas', async (req, res) => {
             nombre: row.nombre,
             rut: row.rut,
             rol: row.rol,
+            telefono: normalizeText(row.telefono),
+            correo: normalizeText(row.correo),
             region: row.region,
             comuna: row.comuna,
             sucursal: normalizeText(row.updated_by_sucursal || row.created_by_sucursal),
