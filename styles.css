@@ -961,6 +961,7 @@ button {
     width: 100%;
 }
 
+.date-range-modal-card,
 .search-match-modal-card {
     width: min(920px, 100%);
     display: flex;
@@ -969,6 +970,7 @@ button {
     max-height: 90vh;
 }
 
+.date-range-table-wrapper,
 .search-match-table-wrapper {
     flex: 1 1 auto;
     min-height: 220px;
@@ -976,6 +978,7 @@ button {
     overflow-y: auto;
 }
 
+.date-range-footer,
 .search-match-footer {
     flex: 0 0 auto;
     margin-top: 10px;
@@ -984,6 +987,7 @@ button {
     background: #b6c7e3;
 }
 
+.date-range-pagination,
 .search-match-pagination {
     display: flex;
     justify-content: center;
@@ -992,6 +996,7 @@ button {
     margin-bottom: 8px;
 }
 
+.date-range-icon-btn,
 .search-match-icon-btn {
     width: 30px;
     height: 30px;
@@ -1008,15 +1013,18 @@ button {
     padding: 0;
 }
 
+.date-range-icon-btn:hover:not(:disabled),
 .search-match-icon-btn:hover:not(:disabled) {
     background: #dbe6f6;
 }
 
+.date-range-icon-btn:disabled,
 .search-match-icon-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
 
+.date-range-page-info,
 .search-match-page-info {
     min-width: 72px;
     text-align: center;
@@ -1025,6 +1033,7 @@ button {
     color: #2a3d6b;
 }
 
+.date-range-actions,
 .search-match-actions {
     margin-top: 8px;
 }
@@ -1254,10 +1263,12 @@ button {
         flex-direction: column;
     }
 
+    .date-range-table-wrapper,
     .search-match-table-wrapper {
         max-height: 45vh;
     }
 
+    .date-range-footer,
     .search-match-footer {
         position: sticky;
         bottom: 0;

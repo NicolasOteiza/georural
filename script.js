@@ -409,6 +409,7 @@ let editingHistoryAction = '';
 let secretaryNoMovementRecords = [];
 let dateRangeMatches = [];
 let selectedDateRangeIngreso = '';
+let dateRangeCurrentPage = 1;
 let searchMatchCandidates = [];
 let selectedSearchMatchIngreso = '';
 let searchMatchCurrentPage = 1;
@@ -432,6 +433,7 @@ let authLoginInProgress = false;
 const DEFAULT_CREATION_COMMENT = 'creacion y recepcion al iniciar un nuevo registro';
 const REGISTRO_REQUIRED_FIELD_IDS = ['nombre', 'rut', 'region', 'comuna', 'rol'];
 const REGISTRO_INLINE_ERROR_FIELD_IDS = [...REGISTRO_REQUIRED_FIELD_IDS, 'correo', 'numLotes'];
+const DATE_RANGE_PAGE_SIZE = 15;
 const SEARCH_MATCH_PAGE_SIZE = 12;
 const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
 const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto'];
@@ -718,6 +720,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         dateRangeExportBtn: document.getElementById('dateRangeExportBtn'),
         dateRangeAcceptBtn: document.getElementById('dateRangeAcceptBtn'),
         dateRangeCancelBtn: document.getElementById('dateRangeCancelBtn'),
+        dateRangeFirstBtn: document.getElementById('dateRangeFirstBtn'),
+        dateRangePrevBtn: document.getElementById('dateRangePrevBtn'),
+        dateRangePageInfo: document.getElementById('dateRangePageInfo'),
+        dateRangeNextBtn: document.getElementById('dateRangeNextBtn'),
+        dateRangeLastBtn: document.getElementById('dateRangeLastBtn'),
         searchMatchModalOverlay: document.getElementById('searchMatchModalOverlay'),
         searchMatchResultsBody: document.getElementById('searchMatchResultsBody'),
         searchMatchMessage: document.getElementById('searchMatchMessage'),
@@ -1133,6 +1140,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (ui.dateRangeCancelBtn) {
         ui.dateRangeCancelBtn.addEventListener('click', closeDateRangeModal);
+    }
+    if (ui.dateRangeFirstBtn) {
+        ui.dateRangeFirstBtn.addEventListener('click', () => handleDateRangeGoToPage(1));
+    }
+    if (ui.dateRangePrevBtn) {
+        ui.dateRangePrevBtn.addEventListener('click', () => handleDateRangeGoToPage(dateRangeCurrentPage - 1));
+    }
+    if (ui.dateRangeNextBtn) {
+        ui.dateRangeNextBtn.addEventListener('click', () => handleDateRangeGoToPage(dateRangeCurrentPage + 1));
+    }
+    if (ui.dateRangeLastBtn) {
+        ui.dateRangeLastBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil((dateRangeMatches.length || 0) / DATE_RANGE_PAGE_SIZE));
+            handleDateRangeGoToPage(totalPages);
+        });
     }
     if (ui.dateRangeModalOverlay) {
         ui.dateRangeModalOverlay.addEventListener('click', (event) => {
@@ -3745,6 +3767,7 @@ function closeDateRangeModal(options = {}) {
     if (!preserveResults) {
         selectedDateRangeIngreso = '';
         dateRangeMatches = [];
+        dateRangeCurrentPage = 1;
         if (ui && ui.dateRangeSucursal) {
             ui.dateRangeSucursal.value = '';
         }
@@ -3769,19 +3792,69 @@ function updateDateRangeExportButtonState(registros) {
     ui.dateRangeExportBtn.disabled = !hasResults;
 }
 
+function updateDateRangePaginationControls(totalItems) {
+    if (!ui) {
+        return;
+    }
+
+    const safeTotalItems = Number.isInteger(totalItems) && totalItems > 0 ? totalItems : 0;
+    const totalPages = safeTotalItems > 0 ? Math.max(1, Math.ceil(safeTotalItems / DATE_RANGE_PAGE_SIZE)) : 1;
+    dateRangeCurrentPage = Math.min(Math.max(dateRangeCurrentPage, 1), totalPages);
+    const isEmpty = safeTotalItems === 0;
+    const isFirstPage = dateRangeCurrentPage <= 1;
+    const isLastPage = dateRangeCurrentPage >= totalPages;
+
+    if (ui.dateRangePageInfo) {
+        ui.dateRangePageInfo.textContent = isEmpty ? '0/0' : `${dateRangeCurrentPage}/${totalPages}`;
+    }
+    if (ui.dateRangeFirstBtn) {
+        ui.dateRangeFirstBtn.disabled = isEmpty || isFirstPage;
+    }
+    if (ui.dateRangePrevBtn) {
+        ui.dateRangePrevBtn.disabled = isEmpty || isFirstPage;
+    }
+    if (ui.dateRangeNextBtn) {
+        ui.dateRangeNextBtn.disabled = isEmpty || isLastPage;
+    }
+    if (ui.dateRangeLastBtn) {
+        ui.dateRangeLastBtn.disabled = isEmpty || isLastPage;
+    }
+}
+
+function handleDateRangeGoToPage(targetPage) {
+    if (!Array.isArray(dateRangeMatches) || dateRangeMatches.length === 0) {
+        return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(dateRangeMatches.length / DATE_RANGE_PAGE_SIZE));
+    const safeTargetPage = Math.min(Math.max(Number(targetPage) || 1, 1), totalPages);
+    if (safeTargetPage === dateRangeCurrentPage) {
+        return;
+    }
+
+    dateRangeCurrentPage = safeTargetPage;
+    renderDateRangeResults(dateRangeMatches);
+}
+
 function renderDateRangeResults(registros) {
     if (!ui || !ui.dateRangeResultsBody) {
         return;
     }
 
-    updateDateRangeExportButtonState(registros);
+    const rows = Array.isArray(registros) ? registros : [];
+    updateDateRangeExportButtonState(rows);
+    updateDateRangePaginationControls(rows.length);
     ui.dateRangeResultsBody.innerHTML = '';
-    if (!Array.isArray(registros) || registros.length === 0) {
+    if (rows.length === 0) {
         ui.dateRangeResultsBody.innerHTML = '<tr><td colspan="8">Sin resultados para mostrar.</td></tr>';
         return;
     }
 
-    registros.forEach((registro, index) => {
+    const startIndex = (dateRangeCurrentPage - 1) * DATE_RANGE_PAGE_SIZE;
+    const pageRows = rows.slice(startIndex, startIndex + DATE_RANGE_PAGE_SIZE);
+
+    pageRows.forEach((registro, pageIndex) => {
+        const index = startIndex + pageIndex;
         const row = document.createElement('tr');
         const radioId = `dateRangeSel-${index}`;
 
@@ -4034,6 +4107,7 @@ async function handleOpenDateRangeModal() {
     setFormMessage(ui.dateRangeMessage, '', '');
     selectedDateRangeIngreso = '';
     dateRangeMatches = [];
+    dateRangeCurrentPage = 1;
     renderDateRangeResults([]);
     ui.dateRangeModalOverlay.classList.remove('hidden');
 }
@@ -4077,6 +4151,7 @@ async function handleDateRangeSearch(event) {
         const result = await apiRequest(`/registros/buscar-rango-fechas?${query.toString()}`);
         const registros = Array.isArray(result.registros) ? result.registros : [];
         dateRangeMatches = registros;
+        dateRangeCurrentPage = 1;
         selectedDateRangeIngreso = registros.length === 1 ? String(registros[0].numIngreso || '') : '';
         renderDateRangeResults(registros);
         setFormMessage(

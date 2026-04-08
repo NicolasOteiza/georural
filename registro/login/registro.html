@@ -6,7 +6,7 @@
     <meta name="geo-rural-api-base" content="">
     <title>Formulario de Registro - Geo Rural</title>
     <link rel="icon" type="image/png" href="../../logo.png">
-    <link rel="stylesheet" href="../../styles.css?v=20260408-12">
+    <link rel="stylesheet" href="../../styles.css?v=20260408-13">
 </head>
 <body>
     <div id="appTopPanels" class="app-top-panels hidden">
@@ -1104,7 +1104,7 @@
     </div>
 
     <div id="dateRangeModalOverlay" class="modal-overlay hidden">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dateRangeModalTitle">
+        <div class="modal-card date-range-modal-card" role="dialog" aria-modal="true" aria-labelledby="dateRangeModalTitle">
             <h3 id="dateRangeModalTitle">BUSCAR REGISTROS POR FECHA</h3>
             <form id="dateRangeForm" class="date-range-form" autocomplete="off">
                 <div class="form-row form-row-triple">
@@ -1142,7 +1142,7 @@
                     </div>
                 </div>
             </form>
-            <div class="history-wrapper">
+            <div class="history-wrapper date-range-table-wrapper">
                 <table class="history-table">
                     <thead>
                         <tr>
@@ -1163,11 +1163,20 @@
                     </tbody>
                 </table>
             </div>
-            <p id="dateRangeMessage" class="form-message" role="status" aria-live="polite"></p>
-            <div class="invoice-modal-actions">
-                <button type="button" id="dateRangeExportBtn" class="buscar hidden">EXPORTAR EXCEL</button>
-                <button type="button" id="dateRangeAcceptBtn" class="guardar">CARGAR REGISTRO</button>
-                <button type="button" id="dateRangeCancelBtn" class="limpiar">CANCELAR</button>
+            <div class="date-range-footer">
+                <div class="date-range-pagination" role="group" aria-label="Paginacion busqueda por fecha">
+                    <button type="button" id="dateRangeFirstBtn" class="date-range-icon-btn" aria-label="Ir al inicio" title="Ir al inicio">|&lt;</button>
+                    <button type="button" id="dateRangePrevBtn" class="date-range-icon-btn" aria-label="Pagina anterior" title="Pagina anterior">&lt;</button>
+                    <span id="dateRangePageInfo" class="date-range-page-info">1/1</span>
+                    <button type="button" id="dateRangeNextBtn" class="date-range-icon-btn" aria-label="Pagina siguiente" title="Pagina siguiente">&gt;</button>
+                    <button type="button" id="dateRangeLastBtn" class="date-range-icon-btn" aria-label="Ir al final" title="Ir al final">&gt;|</button>
+                </div>
+                <p id="dateRangeMessage" class="form-message" role="status" aria-live="polite"></p>
+                <div class="invoice-modal-actions date-range-actions">
+                    <button type="button" id="dateRangeExportBtn" class="buscar hidden">EXPORTAR EXCEL</button>
+                    <button type="button" id="dateRangeAcceptBtn" class="guardar">CARGAR REGISTRO</button>
+                    <button type="button" id="dateRangeCancelBtn" class="limpiar">CANCELAR</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1212,6 +1221,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="../../script.js?v=20260408-11"></script>
+    <script src="../../script.js?v=20260408-13"></script>
 </body>
 </html>
