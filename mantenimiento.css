@@ -1,0 +1,269 @@
+body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+        radial-gradient(circle at 18% 20%, rgba(255, 224, 157, 0.28), transparent 44%),
+        radial-gradient(circle at 82% 0%, rgba(142, 188, 255, 0.26), transparent 40%),
+        linear-gradient(165deg, #f3f5f7 0%, #dbe6f3 54%, #c8d8ed 100%);
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    color: #20344d;
+}
+
+.maintenance-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.maintenance-card {
+    width: min(840px, 100%);
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid #a8bed8;
+    border-radius: 18px;
+    box-shadow: 0 14px 34px rgba(26, 47, 75, 0.22);
+    padding: 22px;
+    box-sizing: border-box;
+}
+
+.maintenance-header {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.maintenance-logo {
+    width: 92px;
+    height: 92px;
+    object-fit: contain;
+    border-radius: 12px;
+    background: #ffffff;
+    border: 1px solid #bad0e8;
+    flex: 0 0 auto;
+}
+
+.maintenance-badge {
+    display: inline-flex;
+    margin: 0 0 8px;
+    padding: 5px 10px;
+    font-size: 0.74rem;
+    letter-spacing: 0.06em;
+    color: #6a3f00;
+    background: #ffd98a;
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.maintenance-header h1 {
+    margin: 0 0 6px;
+    font-size: clamp(1.4rem, 2.4vw, 1.86rem);
+}
+
+.maintenance-lead {
+    margin: 0;
+    color: #35506f;
+}
+
+.maintenance-public-message {
+    margin: 14px 0 0;
+    color: #3a5475;
+}
+
+.maintenance-section {
+    margin-top: 18px;
+    border-top: 1px solid #c4d4e6;
+    padding-top: 14px;
+}
+
+.maintenance-section h2 {
+    margin: 0 0 8px;
+    font-size: 1.1rem;
+}
+
+.maintenance-help {
+    margin: 0 0 10px;
+    color: #4a6487;
+    font-size: 0.92rem;
+}
+
+.maintenance-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.maintenance-field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.maintenance-field label {
+    margin-bottom: 5px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.maintenance-field input {
+    border: 1px solid #a9bfd8;
+    border-radius: 8px;
+    background: #f6f9ff;
+    color: #20344d;
+    padding: 10px;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+}
+
+.maintenance-form .primary-btn {
+    grid-column: 1 / -1;
+}
+
+.maintenance-message {
+    min-height: 22px;
+    margin: 10px 0 0;
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.maintenance-message.success {
+    color: #1f7f43;
+}
+
+.maintenance-message.error {
+    color: #b22f27;
+}
+
+.maintenance-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.maintenance-status-item {
+    border: 1px solid #b8cbe1;
+    border-radius: 10px;
+    background: #f4f8ff;
+    padding: 10px;
+}
+
+.status-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+    color: #547195;
+}
+
+.maintenance-status-item strong {
+    font-size: 0.95rem;
+}
+
+.maintenance-action-row {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.primary-btn,
+.secondary-btn,
+.ghost-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: filter 0.15s ease;
+}
+
+.primary-btn {
+    background: #1f5fa2;
+    color: #ffffff;
+}
+
+.secondary-btn {
+    background: #f0b429;
+    color: #20344d;
+}
+
+.ghost-btn {
+    background: #d7e3f2;
+    color: #1f3c60;
+}
+
+.primary-btn:hover,
+.secondary-btn:hover,
+.ghost-btn:hover {
+    filter: brightness(0.95);
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.ghost-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.maintenance-link-row {
+    margin: 12px 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+
+.maintenance-link-row a,
+.ghost-link-btn {
+    color: #20456d;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.maintenance-link-row a:hover,
+.ghost-link-btn:hover {
+    text-decoration: underline;
+}
+
+.ghost-link-btn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.hidden {
+    display: none !important;
+}
+
+@media (max-width: 800px) {
+    .maintenance-container {
+        align-items: flex-start;
+        padding: 14px;
+    }
+
+    .maintenance-card {
+        padding: 16px;
+        border-radius: 14px;
+    }
+
+    .maintenance-header {
+        align-items: flex-start;
+    }
+
+    .maintenance-logo {
+        width: 78px;
+        height: 78px;
+    }
+
+    .maintenance-form {
+        grid-template-columns: 1fr;
+    }
+
+    .maintenance-status-grid {
+        grid-template-columns: 1fr;
+    }
+}

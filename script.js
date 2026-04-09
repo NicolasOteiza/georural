@@ -6999,7 +6999,7 @@ function getDefaultLoginNoticeUrlByRuntime() {
     if (host === 'localhost' || host === '127.0.0.1') {
         return 'http://localhost/geo_rural/registro/login/registro.html';
     }
-    return 'https://mi-registro.cl/registro/login/registro.html';
+    return 'https://mi-registro.cl/geo_rural/registro/login/registro.html';
 }
 
 function applyAdminLoginRouteNoticeStatus(status) {

@@ -5,11 +5,17 @@
 - MySQL/MariaDB (XAMPP)
 
 ## Configuracion
-1. Edita `.env` si necesitas otro usuario/clave de MySQL.
-2. Variables recomendadas:
-   - `HOST=127.0.0.1` (evita exponer el servidor a la red).
+1. Crea tus archivos de entorno:
+   - Copia `.env.development.example` a `.env.development`.
+   - Copia `.env.production.example` a `.env.production`.
+2. El servidor carga variables en este orden:
+   - `.env`
+   - `.env.<APP_ENV>` (ejemplo: `.env.development` o `.env.production`).
+3. Variables recomendadas:
+   - `APP_ENV=development` o `APP_ENV=production`.
+   - `HOST=127.0.0.1` en produccion (detras de Nginx/Apache) o `HOST=0.0.0.0` para pruebas en LAN.
    - `APP_URL=` (URL publica del sistema en hosting, por ejemplo `https://tu-dominio.com`).
-   - `CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1`
+   - `CORS_ORIGINS=` solo para lista explicita de origenes; en `development` se aceptan origenes de red privada (LAN).
    - `API_WRITE_KEY=` (protege `POST/PUT` con header `X-API-Key`; es obligatorio si `HOST` no es localhost).
    - `AUTH_SESSION_HOURS=12` (duracion de la sesion).
    - `LOGIN_MAX_ATTEMPTS=5`, `LOGIN_WINDOW_MINUTES=15`, `LOGIN_LOCK_MINUTES=15` (limite de intentos fallidos de login).
@@ -18,11 +24,12 @@
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` (respaldo SMTP por variables de entorno).
    - `SUPERUSER_USERNAME`, `SUPERUSER_PASSWORD`, `SUPERUSER_NAME`, `SUPERUSER_BRANCH` (cuenta SUPER principal).
    - `DEFAULT_USERS=...` (usuarios iniciales, formato `usuario|contrasena|sucursal|nombre|rol` separados por coma).
-3. Instala dependencias:
+4. Instala dependencias:
    - `npm install`
-4. Inicia servidor:
-   - `npm start`
-5. Verificacion rapida de sintaxis:
+5. Inicia servidor:
+   - Desarrollo: `npm run start:dev`
+   - Produccion: `npm run start:prod`
+6. Verificacion rapida de sintaxis:
    - `npm run check`
 
 El servidor corre por defecto en `http://127.0.0.1:3000`.
@@ -39,7 +46,7 @@ GRANT ALL PRIVILEGES ON `geo_rural`.* TO 'geo_rural_app'@'127.0.0.1';
 GRANT ALL PRIVILEGES ON `geo_rural`.* TO 'geo_rural_app'@'localhost';
 FLUSH PRIVILEGES;
 ```
-2. Ajusta `.env`:
+2. Ajusta `.env.development` (o `.env.production` segun corresponda):
    - `DB_USER=geo_rural_app`
    - `DB_PASSWORD=Cambia_Esta_Clave_2026!`
 3. Reinicia `iniciar_servidor_node.bat`.
@@ -48,7 +55,7 @@ FLUSH PRIVILEGES;
 1. Inicia Apache y MySQL desde XAMPP.
 2. Abre la carpeta del proyecto: `C:\xampp\htdocs\geo_rural`.
 3. Haz doble clic en `iniciar_servidor_node.bat`.
-4. Espera el mensaje `Servidor activo en http://127.0.0.1:3000`.
+4. Espera el mensaje `Servidor activo en http://...` y verifica que el entorno mostrado sea el correcto.
 5. Deja esa ventana abierta mientras usas el sistema.
 
 Si prefieres terminal:
@@ -64,6 +71,8 @@ Si en el navegador quedo guardado un API base incorrecto, limpialo con:
 
 ## Inicio de sesion
 - El frontend exige login para operar.
+- Vista publica de clientes disponible en `/` o `/index.html` (busqueda por `ROL`, muestra nombre, correo e historial de progreso).
+- Vista interna de registro disponible en `/geo_rural/registro/login/registro.html`.
 - El login permite entrar como `INVITADO` (modo solo lectura, sin edicion de registros).
 - Si la tabla `usuarios` esta vacia al iniciar, el servidor crea usuarios desde `DEFAULT_USERS`.
 - Si `DEFAULT_USERS` esta vacio, el servidor genera un `ADMIN` temporal con clave aleatoria y la muestra en logs de arranque.
@@ -81,6 +90,7 @@ Si en el navegador quedo guardado un API base incorrecto, limpialo con:
 
 ## API disponible
 - `GET /api/health`
+- `GET /api/public/registros/progreso?rol=...` (vista cliente, sin login)
 - `POST /api/auth/login`
 - `POST /api/auth/guest`
 - `GET /api/auth/me`
@@ -123,8 +133,8 @@ Si en el navegador quedo guardado un API base incorrecto, limpialo con:
 - `NRO DE LOTES` ahora acepta solo enteros positivos.
 - Cada alta/modificacion registra usuario + sucursal en `registro_historial`.
 - La documentacion recibida de cada registro se persiste en `registros.documentos` (JSON).
-- Al buscar un registro, el frontend muestra historial de comentarios con fecha y usuario.
+- Al buscar un registro, el frontend muestra historial de progreso con fecha y usuario.
 - El envio de facturas al contador usa SMTP del sistema (igual que cotizaciones), ya no depende de `mailto`.
 - Si una busqueda devuelve multiples coincidencias, el frontend solicita seleccionar `NRO INGRESO` exacto.
 - La sesion se valida por cookie `HttpOnly` y ya no depende de token persistente en `localStorage`.
-- Si el frontend corre en otro puerto local (ej: XAMPP en `localhost`), usa automaticamente `http://127.0.0.1:3000/api`.
+- Si el frontend corre en otro puerto/local host (ej: XAMPP en `localhost` o IP LAN), usa automaticamente `http://<host-actual>:3000/api`.

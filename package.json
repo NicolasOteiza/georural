@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
+    "start:dev": "node server.js --env=development",
+    "start:prod": "node server.js --env=production",
+    "dev": "npm run start:dev",
     "check:server": "node --check server.js",
     "check:client": "node --check script.js",
     "check": "npm run check:server && npm run check:client",

@@ -1,0 +1,26 @@
+Options -Indexes
+ServerSignature Off
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Si entran a /registro, enviar al menu de cliente.
+    RewriteRule ^registro/?$ /geo_rural/index.html [R=302,L]
+
+    # Si entran a /registro/login sin archivo, completar ruta interna.
+    RewriteRule ^registro/login/?$ /geo_rural/registro/login/registro.html [R=302,L]
+
+    # Bloquea acceso directo a carpetas internas sensibles.
+    RewriteRule ^(?:database|logs|node_modules|\.git)(?:/|$) - [F,L]
+</IfModule>
+
+# Bloquea archivos sensibles y de respaldo desde la web.
+<FilesMatch "(^\.|\.env(?:\..+)?$|^server\.js$|^README\.md$|^package(?:-lock)?\.json$|^iniciar_servidor_node\.bat$|\.sql$|\.log$|\.bak$|\.docx$)">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

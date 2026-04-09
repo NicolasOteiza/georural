@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sitio en Mantencion - Geo Rural</title>
+    <link rel="icon" type="image/png" href="logo.png">
+    <link rel="stylesheet" href="mantenimiento.css?v=20260327-01">
+</head>
+<body>
+    <main class="maintenance-container">
+        <section class="maintenance-card">
+            <header class="maintenance-header">
+                <img src="logo.png" alt="Geo Rural Logo" class="maintenance-logo">
+                <div>
+                    <p class="maintenance-badge">SERVICIO TEMPORALMENTE PAUSADO</p>
+                    <h1>Sitio en Mantencion</h1>
+                    <p class="maintenance-lead">
+                        Estamos realizando mejoras. Intenta nuevamente en unos minutos.
+                    </p>
+                </div>
+            </header>
+
+            <p class="maintenance-public-message">
+                Si ya iniciaste tu proceso, tu informacion esta segura. Este corte es solo temporal.
+            </p>
+
+            <section id="superAccessSection" class="maintenance-section">
+                <h2>Acceso Superusuario</h2>
+                <p class="maintenance-help">Solo el rol SUPER puede habilitar o deshabilitar este modo.</p>
+                <form id="superLoginForm" class="maintenance-form" autocomplete="off">
+                    <div class="maintenance-field">
+                        <label for="superUsername">USUARIO</label>
+                        <input type="text" id="superUsername" maxlength="80" required>
+                    </div>
+                    <div class="maintenance-field">
+                        <label for="superPassword">CONTRASENA</label>
+                        <input type="password" id="superPassword" maxlength="200" required>
+                    </div>
+                    <button type="submit" class="primary-btn">INGRESAR COMO SUPER</button>
+                </form>
+                <p id="superLoginMessage" class="maintenance-message" role="status" aria-live="polite"></p>
+            </section>
+
+            <section id="superPanel" class="maintenance-section hidden">
+                <h2>Panel de Control SUPER</h2>
+                <div class="maintenance-status-grid">
+                    <div class="maintenance-status-item">
+                        <span class="status-label">Estado actual</span>
+                        <strong id="maintenanceState">Cargando...</strong>
+                    </div>
+                    <div class="maintenance-status-item">
+                        <span class="status-label">Ultima modificacion</span>
+                        <strong id="maintenanceUpdatedAt">-</strong>
+                    </div>
+                    <div class="maintenance-status-item">
+                        <span class="status-label">Actualizado por</span>
+                        <strong id="maintenanceUpdatedBy">-</strong>
+                    </div>
+                </div>
+                <div class="maintenance-action-row">
+                    <button type="button" id="enableMaintenanceBtn" class="primary-btn">ACTIVAR MANTENCION</button>
+                    <button type="button" id="disableMaintenanceBtn" class="secondary-btn">VOLVER A MODO NORMAL</button>
+                    <button type="button" id="refreshMaintenanceBtn" class="ghost-btn">ACTUALIZAR ESTADO</button>
+                </div>
+                <p id="maintenancePanelMessage" class="maintenance-message" role="status" aria-live="polite"></p>
+                <p class="maintenance-link-row">
+                    <a href="index.html">Abrir vista publica</a>
+                    <a href="/geo_rural/registro/login/registro.html">Abrir sistema interno</a>
+                    <button type="button" id="superLogoutBtn" class="ghost-link-btn">Cerrar sesion</button>
+                </p>
+            </section>
+        </section>
+    </main>
+
+    <script src="mantenimiento.js?v=20260328-01"></script>
+</body>
+</html>

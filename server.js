@@ -148,7 +148,7 @@ const LOGIN_ROUTE_NOTICE_DEV_URL = normalizeText(
     process.env.LOGIN_ROUTE_NOTICE_DEV_URL || 'http://localhost/geo_rural/registro/login/registro.html'
 );
 const LOGIN_ROUTE_NOTICE_PROD_URL = normalizeText(
-    process.env.LOGIN_ROUTE_NOTICE_PROD_URL || 'https://mi-registro.cl/registro/login/registro.html'
+    process.env.LOGIN_ROUTE_NOTICE_PROD_URL || 'https://mi-registro.cl/geo_rural/registro/login/registro.html'
 );
 const LOGIN_ROUTE_NOTICE_DEFAULT_URL = normalizeText(
     process.env.LOGIN_ROUTE_NOTICE_DEFAULT_URL || (IS_PRODUCTION_ENV ? LOGIN_ROUTE_NOTICE_PROD_URL : LOGIN_ROUTE_NOTICE_DEV_URL)
@@ -3645,7 +3645,7 @@ function setMaintenanceModeCacheFromRow(row) {
 function normalizeLoginRouteNoticeUrl(value) {
     const raw = normalizeText(value || LOGIN_ROUTE_NOTICE_DEFAULT_URL);
     if (!raw) {
-        return normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/registro/login/registro.html');
+        return normalizeText(LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/geo_rural/registro/login/registro.html');
     }
 
     if (IS_PRODUCTION_ENV) {
@@ -3654,10 +3654,10 @@ function normalizeLoginRouteNoticeUrl(value) {
             /^https?:\/\/127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(raw) ||
             /^localhost(?:\:\d+)?(?:\/|$)/i.test(raw) ||
             /^127\.0\.0\.1(?:\:\d+)?(?:\/|$)/i.test(raw) ||
-            /^https?:\/\/my-registro\.cl(?:\/|$)/i.test(raw) ||
-            /^my-registro\.cl(?:\/|$)/i.test(raw)
+            /^https?:\/\/m[iy]-registro\.cl(?:\/|$)/i.test(raw) ||
+            /^m[iy]-registro\.cl(?:\/|$)/i.test(raw)
         ) {
-            return normalizeText(LOGIN_ROUTE_NOTICE_PROD_URL || LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/registro/login/registro.html');
+            return normalizeText(LOGIN_ROUTE_NOTICE_PROD_URL || LOGIN_ROUTE_NOTICE_DEFAULT_URL || '/geo_rural/registro/login/registro.html');
         }
     }
 
@@ -3855,7 +3855,7 @@ function isLoopbackRedirectTarget(target) {
 }
 
 function resolveConfiguredLoginRedirectTarget(requestPathname = '', req = null) {
-    const fallbackTarget = '/registro/login/registro.html';
+    const fallbackTarget = '/geo_rural/registro/login/registro.html';
     const configuredTarget = normalizeLoginRouteNoticeUrl(
         loginRouteNoticeCache.url || LOGIN_ROUTE_NOTICE_DEFAULT_URL || fallbackTarget
     );
@@ -4822,7 +4822,7 @@ async function createSystemConfigTable() {
             id TINYINT UNSIGNED NOT NULL,
             maintenance_mode TINYINT(1) NOT NULL DEFAULT 0,
             login_notice_enabled TINYINT(1) NOT NULL DEFAULT 0,
-            login_notice_url VARCHAR(255) NOT NULL DEFAULT '/registro/login/registro.html',
+            login_notice_url VARCHAR(255) NOT NULL DEFAULT '/geo_rural/registro/login/registro.html',
             login_notice_message VARCHAR(600) NULL,
             login_notice_starts_at DATETIME NULL,
             login_notice_expires_at DATETIME NULL,
@@ -4843,7 +4843,7 @@ async function ensureSystemConfigColumns() {
     await ensureColumn(
         'sistema_configuracion',
         'login_notice_url',
-        "`login_notice_url` VARCHAR(255) NOT NULL DEFAULT '/registro/login/registro.html' AFTER login_notice_enabled"
+        "`login_notice_url` VARCHAR(255) NOT NULL DEFAULT '/geo_rural/registro/login/registro.html' AFTER login_notice_enabled"
     );
     await ensureColumn(
         'sistema_configuracion',
@@ -4908,6 +4908,7 @@ async function ensureSystemConfigRow() {
                   AND (
                         login_notice_url IS NULL
                      OR TRIM(login_notice_url) = ''
+                     OR LOWER(TRIM(login_notice_url)) = '/geo_rural/registro/login/registro.html'
                      OR LOWER(TRIM(login_notice_url)) = '/registro/login/registro.html'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'localhost/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE '127.0.0.1/%'
@@ -4915,6 +4916,9 @@ async function ensureSystemConfigRow() {
                      OR LOWER(TRIM(login_notice_url)) LIKE 'https://localhost/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'http://127.0.0.1/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'https://127.0.0.1/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'mi-registro.cl/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'http://mi-registro.cl/%'
+                     OR LOWER(TRIM(login_notice_url)) LIKE 'https://mi-registro.cl/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'my-registro.cl/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'http://my-registro.cl/%'
                      OR LOWER(TRIM(login_notice_url)) LIKE 'https://my-registro.cl/%'

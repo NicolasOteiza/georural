@@ -6,7 +6,7 @@
     <meta name="geo-rural-api-base" content="">
     <title>Seguimiento de Progreso - Geo Rural</title>
     <link rel="icon" type="image/png" href="logo.png">
-    <link rel="stylesheet" href="seguimiento.css?v=20260401-01">
+    <link rel="stylesheet" href="seguimiento.css?v=20260327-01">
 </head>
 <body>
     <main class="seguimiento-container">
@@ -26,28 +26,8 @@
                         <input type="text" id="publicProgressRol" maxlength="120" placeholder="Ej: 123-45">
                     </div>
                 </div>
-                <button type="submit" id="publicProgressSearchBtn" class="seguimiento-search-btn">BUSCAR PROGRESO</button>
+                <button type="submit" class="seguimiento-search-btn">BUSCAR PROGRESO</button>
             </form>
-
-            <section id="publicProgressLoading" class="seguimiento-loader hidden" aria-live="polite" aria-hidden="true">
-                <div class="seguimiento-loader-scene" aria-hidden="true">
-                    <div class="seguimiento-loader-cabinet">
-                        <div class="seguimiento-loader-drawer"></div>
-                        <div class="seguimiento-loader-drawer"></div>
-                        <div class="seguimiento-loader-drawer"></div>
-                    </div>
-                    <div class="seguimiento-loader-lane">
-                        <span class="seguimiento-loader-file file-1"></span>
-                        <span class="seguimiento-loader-file file-2"></span>
-                        <span class="seguimiento-loader-file file-3"></span>
-                    </div>
-                    <div class="seguimiento-loader-computer">
-                        <div class="seguimiento-loader-screen"></div>
-                        <div class="seguimiento-loader-stand"></div>
-                    </div>
-                </div>
-                <p class="seguimiento-loader-text">Buscando informacion del ROL...</p>
-            </section>
 
             <p id="publicProgressMessage" class="seguimiento-message" role="status" aria-live="polite"></p>
 
@@ -96,29 +76,6 @@
         </section>
     </main>
 
-    <div id="loginRouteNoticeOverlay" class="seguimiento-notice-overlay hidden" aria-hidden="true">
-        <section
-            class="seguimiento-notice-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="loginRouteNoticeTitle"
-            aria-describedby="loginRouteNoticeMessage"
-        >
-            <h2 id="loginRouteNoticeTitle">IMPORTANTE: CAMBIO DE ACCESO</h2>
-            <p id="loginRouteNoticeMessage" class="seguimiento-notice-message">
-                Pedimos disculpas, pero por cambios de seguridad y para habilitar la vista del cliente se ha modificado
-                la ruta de acceso a las cuentas de usuarios.
-            </p>
-            <p class="seguimiento-notice-url-label">NUEVA URL DE LOGIN</p>
-            <p id="loginRouteNoticeUrl" class="seguimiento-notice-url">/geo_rural/registro/login/registro.html</p>
-            <p id="loginRouteNoticeExpire" class="seguimiento-notice-expire"></p>
-            <div class="seguimiento-notice-actions">
-                <a id="loginRouteNoticeOpenBtn" class="seguimiento-notice-open-btn" href="/geo_rural/registro/login/registro.html">IR DIRECTO AL LOGIN</a>
-                <button type="button" id="loginRouteNoticeCloseBtn" class="seguimiento-notice-close-btn">ENTENDIDO</button>
-            </div>
-        </section>
-    </div>
-
-    <script src="seguimiento.js?v=20260401-04"></script>
+    <script src="seguimiento.js?v=20260328-01"></script>
 </body>
 </html>

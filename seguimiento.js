@@ -381,8 +381,8 @@ function resolveApiBase() {
 
     const host = String(window.location.hostname || '').trim().toLowerCase();
     const port = String(window.location.port || '').trim();
-    const protocol = String(window.location.protocol || '').trim().toLowerCase();
-    if (host && !host.includes(':') && port !== '3000' && protocol !== 'https:') {
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+    if (isLocalhost && port !== '3000') {
         return `http://${host}:3000/api`;
     }
 

@@ -3,6 +3,13 @@ setlocal
 
 cd /d "%~dp0"
 
+if "%APP_ENV%"=="" set "APP_ENV=development"
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /I "%%~A"=="APP_ENV" if not "%%~B"=="" set "APP_ENV=%%~B"
+  )
+)
+
 echo [Geo Rural] Verificando Node.js...
 where node >nul 2>&1
 if errorlevel 1 (
@@ -36,16 +43,31 @@ if not exist "node_modules" (
 
 set "DB_HOST=127.0.0.1"
 set "DB_PORT=3306"
+set "APP_HOST=127.0.0.1"
+set "APP_PORT=3000"
 
 if exist ".env" (
   for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if /I "%%~A"=="DB_HOST" set "DB_HOST=%%~B"
     if /I "%%~A"=="DB_PORT" set "DB_PORT=%%~B"
+    if /I "%%~A"=="HOST" set "APP_HOST=%%~B"
+    if /I "%%~A"=="PORT" set "APP_PORT=%%~B"
+  )
+)
+
+if exist ".env.%APP_ENV%" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env.%APP_ENV%") do (
+    if /I "%%~A"=="DB_HOST" set "DB_HOST=%%~B"
+    if /I "%%~A"=="DB_PORT" set "DB_PORT=%%~B"
+    if /I "%%~A"=="HOST" set "APP_HOST=%%~B"
+    if /I "%%~A"=="PORT" set "APP_PORT=%%~B"
   )
 )
 
 if "%DB_HOST%"=="" set "DB_HOST=127.0.0.1"
 if "%DB_PORT%"=="" set "DB_PORT=3306"
+if "%APP_HOST%"=="" set "APP_HOST=127.0.0.1"
+if "%APP_PORT%"=="" set "APP_PORT=3000"
 
 powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $hostName='%DB_HOST%'; $port=[int]%DB_PORT%; $client=New-Object System.Net.Sockets.TcpClient; try { $async=$client.BeginConnect($hostName,$port,$null,$null); if(-not $async.AsyncWaitHandle.WaitOne(1500)){ throw 'timeout' }; $client.EndConnect($async) | Out-Null; exit 0 } catch { exit 1 } finally { $client.Close() }" >nul 2>&1
 if errorlevel 1 (
@@ -57,7 +79,8 @@ if errorlevel 1 (
 )
 
 echo [Geo Rural] Iniciando servidor Node...
-echo [Geo Rural] URL: http://127.0.0.1:3000
+echo [Geo Rural] Entorno: %APP_ENV%
+echo [Geo Rural] URL: http://%APP_HOST%:%APP_PORT%
 call "%NPM_CMD%" start
 
 echo.
