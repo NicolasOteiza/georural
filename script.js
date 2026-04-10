@@ -17,7 +17,7 @@ const DEFAULT_DOCUMENT_GROUP_TITLES = [
 const OPERATOR_LAST_DEST_EMAIL_STORAGE = 'geo_rural_last_invoice_destination_email';
 const SECRETARY_DAILY_ALERT_STORAGE_PREFIX = 'geo_rural_secretary_no_movement_seen_';
 const SECRETARY_NO_MOVEMENT_DAYS = 8;
-const APP_BUILD = '2026-03-28-01';
+const APP_BUILD = '2026-04-10-01';
 const MAIL_SEND_PROGRESS_MIN_MS = 1600;
 const MAIL_SEND_PROGRESS_FINAL_MS = 900;
 const REQUESTED_INVOICES_PAGE_SIZE = 5;
@@ -39,6 +39,28 @@ const MONTH_NAMES_ES = [
     'noviembre',
     'diciembre'
 ];
+const REGION_ROMAN_NUMERAL_LOOKUP = Object.freeze({
+    'arica y parinacota': 'XV',
+    tarapaca: 'I',
+    antofagasta: 'II',
+    atacama: 'III',
+    coquimbo: 'IV',
+    valparaiso: 'V',
+    metropolitana: 'XIII',
+    'metropolitana de santiago': 'XIII',
+    'o higgins': 'VI',
+    'libertador general bernardo o higgins': 'VI',
+    maule: 'VII',
+    nuble: 'XVI',
+    biobio: 'VIII',
+    araucania: 'IX',
+    'los rios': 'XIV',
+    'los lagos': 'X',
+    aysen: 'XI',
+    'aysen del general carlos ibanez del campo': 'XI',
+    magallanes: 'XII',
+    'magallanes y de la antartica chilena': 'XII'
+});
 
 const REGION_COMUNAS = {
     'Arica y Parinacota': ['Arica', 'Camarones', 'Putre', 'General Lagos'],
@@ -439,8 +461,9 @@ const DATE_RANGE_MIN_PAGE_SIZE = 6;
 const DATE_RANGE_FALLBACK_PAGE_SIZE = 10;
 const DATE_RANGE_MAX_PAGE_SIZE = 40;
 const SEARCH_MATCH_PAGE_SIZE = 12;
+const FACTURA_NUMBER_MAX_LENGTH = 80;
 const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
-const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto'];
+const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto', 'facturaNumero'];
 const EXISTING_RECORD_SAVE_WARNING =
     'No se puede crear porque el registro ya existe. Si ha realizado cambios pulse en MODIFICAR para guardar los cambios.';
 const PENDING_MODIFY_REQUIRED_WARNING =
@@ -578,6 +601,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminLoginNoticeMessage: document.getElementById('adminLoginNoticeMessage'),
         numIngreso: document.getElementById('numIngreso'),
         numIngresoHint: document.getElementById('numIngresoHint'),
+        estado: document.getElementById('estado'),
+        facturaNumeroGroup: document.getElementById('facturaNumeroGroup'),
+        facturaNumero: document.getElementById('facturaNumero'),
         region: document.getElementById('region'),
         comuna: document.getElementById('comuna'),
         comentario: document.getElementById('comentario'),
@@ -756,6 +782,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ui.adminPanel.classList.add('hidden');
     setOperatorBillingVisibility(false);
     setFacturaContainerVisibility(false);
+    syncFacturaNumeroVisibility({ clearOnHide: true });
 
     populateRegiones(ui.region, 'Seleccione region');
     populateRegiones(ui.dateRangeRegion, 'TODAS');
@@ -826,6 +853,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             );
             void applySecretaryNoMovementFilters();
         });
+    }
+    if (ui.estado) {
+        ui.estado.addEventListener('change', handleEstadoFacturaChange);
     }
 
     ui.loginForm.addEventListener('submit', handleLoginSubmit);
@@ -1430,6 +1460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadedRecordUnknownDocuments = [];
             loadedComentarioOriginal = '';
             resetFacturaForm();
+            syncFacturaNumeroVisibility({ clearOnHide: true });
             updateRegistroActionButtons();
         });
     });
@@ -1736,6 +1767,7 @@ function showAppForUser(user) {
     setFacturaContainerVisibility(canUseFacturaContainer(user));
     setComentarioVisibilityByUser(user);
     setGuestReadOnlyUiState(user);
+    syncFacturaNumeroVisibility({ clearOnHide: false });
     syncOperatorDocumentAlertsButtonVisibility(user);
     void loadDateRangeBranches({ preserveSelection: false });
     setFormMessage(ui.facturaFormMessage, '', '');
@@ -2152,6 +2184,32 @@ function canUseFacturaContainer(user) {
     return canUseSecretaryFeatures(user);
 }
 
+function canUseFacturaNumeroField(user) {
+    return isSecretaryUser(user) && !isGuestUser(user);
+}
+
+function syncFacturaNumeroVisibility(options = {}) {
+    if (!ui || !ui.facturaNumeroGroup || !ui.facturaNumero) {
+        return;
+    }
+
+    const clearOnHide = options.clearOnHide === true;
+    const normalizedEstado = normalizeEstadoValue(ui.estado?.value);
+    const shouldShow = canUseFacturaNumeroField(currentUser) && normalizedEstado === 'facturada';
+
+    if (!shouldShow && clearOnHide) {
+        ui.facturaNumero.value = '';
+        clearRegistroFieldError('facturaNumero');
+    }
+
+    ui.facturaNumeroGroup.classList.toggle('hidden', !shouldShow);
+    ui.facturaNumero.disabled = !shouldShow;
+}
+
+function handleEstadoFacturaChange() {
+    syncFacturaNumeroVisibility({ clearOnHide: true });
+}
+
 function canUseInvoiceWorkflow(user) {
     return canUseOperatorBilling(user) || canUseFacturaContainer(user);
 }
@@ -2347,6 +2405,7 @@ function setGuestReadOnlyUiState(user) {
         const selectedComuna = ui.comuna.value;
         populateComunas(ui.comuna, ui.region.value, selectedComuna);
     }
+    syncFacturaNumeroVisibility({ clearOnHide: false });
 }
 
 function isPasswordChangeRequired(user) {
@@ -2421,6 +2480,7 @@ function buildCurrentRegistroSnapshot() {
         estado: normalizeEstadoValue(document.getElementById('estado')?.value),
         factura: {
             nombreRazonSocial: normalizeRegistroSnapshotText(ui?.facturaNombreRazon?.value),
+            numeroFactura: normalizeRegistroSnapshotText(ui?.facturaNumero?.value),
             rut: normalizeRegistroSnapshotText(ui?.facturaRut?.value),
             giro: normalizeRegistroSnapshotText(ui?.facturaGiro?.value),
             direccion: normalizeRegistroSnapshotText(ui?.facturaDireccion?.value),
@@ -4245,6 +4305,45 @@ function formatEstadoForExport(value) {
     return String(normalized || '').toUpperCase();
 }
 
+function normalizeRegionLookupKey(value) {
+    const normalized = String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\bregion\b/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    return normalized.replace(/^de\s+/, '').replace(/^del\s+/, '');
+}
+
+function resolveRegionRomanNumeral(regionValue) {
+    const normalizedRegion = normalizeRegionLookupKey(regionValue);
+    if (!normalizedRegion) {
+        return '';
+    }
+    return REGION_ROMAN_NUMERAL_LOOKUP[normalizedRegion] || '';
+}
+
+function formatNumIngresoForDateRangeExport(numIngreso, regionValue) {
+    const normalizedIngreso = normalizeText(numIngreso);
+    if (!normalizedIngreso) {
+        return '';
+    }
+
+    const romanNumeral = resolveRegionRomanNumeral(regionValue);
+    if (!romanNumeral) {
+        return normalizedIngreso;
+    }
+
+    const expectedSuffix = `-${romanNumeral}`;
+    if (normalizedIngreso.toUpperCase().endsWith(expectedSuffix)) {
+        return normalizedIngreso;
+    }
+
+    return `${normalizedIngreso}${expectedSuffix}`;
+}
+
 function buildDateRangeExportRows(registros) {
     if (!Array.isArray(registros)) {
         return [];
@@ -4252,7 +4351,7 @@ function buildDateRangeExportRows(registros) {
 
     return registros.map((registro, index) => [
         String(index + 1),
-        normalizeText(registro?.numIngreso),
+        formatNumIngresoForDateRangeExport(registro?.numIngreso, registro?.region),
         formatDateTime(registro?.createdAt),
         normalizeText(registro?.nombre),
         normalizeText(registro?.rut),
@@ -4317,7 +4416,7 @@ async function exportDateRangeWorkbookAsXlsxTable(registros) {
 
     const headers = ['#', 'NRO INGRESO', 'FECHA REGISTRO', 'NOMBRE', 'RUT', 'ROL', 'TELEFONO', 'CORREO', 'REGION', 'COMUNA', 'SUCURSAL', 'ESTADO'];
     const rows = buildDateRangeExportRows(registros).map((rowValues) => rowValues.map((value) => String(value ?? '')));
-    const columnWidths = [6, 14, 20, 40, 16, 16, 15, 35, 20, 20, 20, 14];
+    const columnWidths = [6, 18, 20, 40, 16, 16, 15, 35, 20, 20, 20, 14];
 
     const workbook = new excelJsLib.Workbook();
     workbook.creator = 'Geo Rural';
@@ -4374,7 +4473,7 @@ function exportDateRangeWorkbookAsXls(registros) {
 
     worksheet['!cols'] = [
         { wch: 6 },
-        { wch: 14 },
+        { wch: 18 },
         { wch: 20 },
         { wch: 40 },
         { wch: 16 },
@@ -5488,6 +5587,7 @@ function resetFacturaForm() {
 
     const fields = [
         ui.facturaNombreRazon,
+        ui.facturaNumero,
         ui.facturaRut,
         ui.facturaGiro,
         ui.facturaDireccion,
@@ -5506,6 +5606,7 @@ function resetFacturaForm() {
     clearCurrentInvoiceRequestStatus();
     setFormMessage(ui.facturaFormMessage, '', '');
     syncFacturaFromMainForm();
+    syncFacturaNumeroVisibility({ clearOnHide: false });
 }
 
 function collectFacturaFormData() {
@@ -5523,6 +5624,7 @@ function collectFacturaFormData() {
 function collectFacturaSnapshotData() {
     return {
         nombreRazonSocial: normalizeInvoiceText(ui.facturaNombreRazon?.value, 255),
+        numeroFactura: normalizeInvoiceText(ui.facturaNumero?.value, FACTURA_NUMBER_MAX_LENGTH),
         rut: normalizeInvoiceText(ui.facturaRut?.value, 20),
         giro: normalizeInvoiceText(ui.facturaGiro?.value, 255),
         direccion: normalizeInvoiceText(ui.facturaDireccion?.value, 255),
@@ -5541,6 +5643,9 @@ function applyFacturaSnapshotToForm(factura) {
 
     if (ui.facturaNombreRazon) {
         ui.facturaNombreRazon.value = normalizeInvoiceText(factura.nombreRazonSocial, 255);
+    }
+    if (ui.facturaNumero) {
+        ui.facturaNumero.value = normalizeInvoiceText(factura.numeroFactura, FACTURA_NUMBER_MAX_LENGTH);
     }
     if (ui.facturaRut) {
         ui.facturaRut.value = normalizeInvoiceText(factura.rut, 20);
@@ -5589,6 +5694,9 @@ function resolveFacturaFieldIdFromErrorMessage(message) {
     }
     if (compactMessage.includes('factura rut') || compactMessage.includes('rut invalido')) {
         return 'facturaRut';
+    }
+    if (compactMessage.includes('factura numero')) {
+        return 'facturaNumero';
     }
     if (compactMessage.includes('giro')) {
         return 'facturaGiro';
@@ -9755,6 +9863,7 @@ function fillForm(form, data, comunaSelect) {
     renderDocumentOptions(configuredDocumentOptions, selectedVisibleDocs);
     resetFacturaForm();
     applyFacturaSnapshotToForm(data.factura);
+    syncFacturaNumeroVisibility({ clearOnHide: false });
 }
 
 function canEditHistoryComments(user) {

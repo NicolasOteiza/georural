@@ -1597,6 +1597,7 @@ function validateRegistroPayloadLengths(payload) {
         ['ROL', payload.rol, 120],
         ['ESTADO', payload.estado, 40],
         ['FACTURA NOMBRE / RAZON SOCIAL', payload.facturaNombreRazon, 255],
+        ['FACTURA NUMERO', payload.facturaNumero, 80],
         ['FACTURA RUT', payload.facturaRut, 20],
         ['FACTURA GIRO', payload.facturaGiro, 255],
         ['FACTURA DIRECCION', payload.facturaDireccion, 255],
@@ -2042,6 +2043,7 @@ function buildAutomaticModificationComment(existingRow, payload, docsAdded = [],
     appendTextChange('nombre predio', existingRow.nombre_predio, payload.nombrePredio, 'registro');
     appendTextChange('rol', existingRow.rol, payload.rol, 'registro');
     appendTextChange('factura nombre/razon social', existingRow.factura_nombre_razon, payload.facturaNombreRazon, 'factura');
+    appendTextChange('factura numero', existingRow.factura_numero, payload.facturaNumero, 'factura');
     appendTextChange('factura rut', existingRow.factura_rut, payload.facturaRut, 'factura');
     appendTextChange('factura giro', existingRow.factura_giro, payload.facturaGiro, 'factura');
     appendTextChange('factura direccion', existingRow.factura_direccion, payload.facturaDireccion, 'factura');
@@ -2168,6 +2170,7 @@ function toApiRow(row) {
         documentos: parseStoredDocumentList(row.documentos),
         factura: {
             nombreRazonSocial: row.factura_nombre_razon || '',
+            numeroFactura: row.factura_numero || '',
             rut: row.factura_rut || '',
             giro: row.factura_giro || '',
             direccion: row.factura_direccion || '',
@@ -4160,7 +4163,8 @@ async function ensureRegistrosAuditColumns() {
 
 async function ensureRegistrosFacturaColumns() {
     await ensureColumn('registros', 'factura_nombre_razon', '`factura_nombre_razon` VARCHAR(255) NULL AFTER comentario');
-    await ensureColumn('registros', 'factura_rut', '`factura_rut` VARCHAR(20) NULL AFTER factura_nombre_razon');
+    await ensureColumn('registros', 'factura_numero', '`factura_numero` VARCHAR(80) NULL AFTER factura_nombre_razon');
+    await ensureColumn('registros', 'factura_rut', '`factura_rut` VARCHAR(20) NULL AFTER factura_numero');
     await ensureColumn('registros', 'factura_giro', '`factura_giro` VARCHAR(255) NULL AFTER factura_rut');
     await ensureColumn('registros', 'factura_direccion', '`factura_direccion` VARCHAR(255) NULL AFTER factura_giro');
     await ensureColumn('registros', 'factura_comuna', '`factura_comuna` VARCHAR(120) NULL AFTER factura_direccion');
@@ -5146,6 +5150,7 @@ async function initDatabase() {
             estado VARCHAR(40) NULL,
             comentario TEXT NULL,
             factura_nombre_razon VARCHAR(255) NULL,
+            factura_numero VARCHAR(80) NULL,
             factura_rut VARCHAR(20) NULL,
             factura_giro VARCHAR(255) NULL,
             factura_direccion VARCHAR(255) NULL,
@@ -5456,6 +5461,9 @@ app.get('/api/public/registros/progreso', async (req, res) => {
                     id,
                     nombre,
                     correo,
+                    nombre_predio,
+                    region,
+                    comuna,
                     rol
                 FROM registros
                 WHERE ${buildRolWhereClause('rol')}
@@ -5474,6 +5482,9 @@ app.get('/api/public/registros/progreso', async (req, res) => {
         return res.json({
             nombre: normalizeText(targetRow.nombre),
             correo: normalizeText(targetRow.correo).toLowerCase(),
+            nombrePredio: normalizeText(targetRow.nombre_predio),
+            region: normalizeText(targetRow.region),
+            comuna: normalizeText(targetRow.comuna),
             rol: normalizeText(targetRow.rol),
             historial: historial.map(toPublicProgressHistoryRow)
         });
@@ -7345,6 +7356,7 @@ app.post('/api/registros', requireWriteAccess, async (req, res) => {
         comentario: incomingComment || DEFAULT_CREATION_COMMENT,
         documentos: safeJsonArray(req.body.documentos),
         facturaNombreRazon: normalizeText(rawFactura.nombreRazonSocial),
+        facturaNumero: normalizeText(rawFactura.numeroFactura || rawFactura.numero || rawFactura.numeroDeFactura),
         facturaRut: normalizeText(rawFactura.rut),
         facturaGiro: normalizeText(rawFactura.giro),
         facturaDireccion: normalizeText(rawFactura.direccion),
@@ -7402,6 +7414,11 @@ app.post('/api/registros', requireWriteAccess, async (req, res) => {
         });
     }
 
+    const canEditFacturaNumero = isSecretaryUser(req.authUser) && !isGuestUser(req.authUser);
+    if (!canEditFacturaNumero || payload.estado !== 'facturada') {
+        payload.facturaNumero = '';
+    }
+
     const userHasBackofficeAccess = hasBackofficeRegistroAccess(req.authUser);
     const userBranch = normalizeText(req.authUser.sucursal) || null;
     if (!userHasBackofficeAccess && !userBranch) {
@@ -7429,13 +7446,13 @@ app.post('/api/registros', requireWriteAccess, async (req, res) => {
                     nombre, rut, telefono, correo,
                     region, comuna, nombre_predio,
                     rol, num_lotes, estado, comentario,
-                    factura_nombre_razon, factura_rut, factura_giro,
+                    factura_nombre_razon, factura_numero, factura_rut, factura_giro,
                     factura_direccion, factura_comuna, factura_ciudad,
                     factura_contacto, factura_observacion, factura_monto,
                     created_by, created_by_sucursal,
                     updated_by, updated_by_sucursal,
                     documentos
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 reservedIngreso.numIngreso,
@@ -7453,6 +7470,7 @@ app.post('/api/registros', requireWriteAccess, async (req, res) => {
                 payload.estado || null,
                 payload.comentario || null,
                 payload.facturaNombreRazon || null,
+                payload.facturaNumero || null,
                 payload.facturaRut || null,
                 payload.facturaGiro || null,
                 payload.facturaDireccion || null,
@@ -7525,6 +7543,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
         comentario: normalizeText(req.body.comentario),
         documentos: safeJsonArray(req.body.documentos),
         facturaNombreRazon: normalizeText(rawFactura.nombreRazonSocial),
+        facturaNumero: normalizeText(rawFactura.numeroFactura || rawFactura.numero || rawFactura.numeroDeFactura),
         facturaRut: normalizeText(rawFactura.rut),
         facturaGiro: normalizeText(rawFactura.giro),
         facturaDireccion: normalizeText(rawFactura.direccion),
@@ -7630,6 +7649,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
                     estado,
                     comentario,
                     factura_nombre_razon,
+                    factura_numero,
                     factura_rut,
                     factura_giro,
                     factura_direccion,
@@ -7663,6 +7683,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
             payload.rol = normalizeText(existingRows[0].rol);
             payload.estado = normalizeEstado(existingRows[0].estado);
             payload.facturaNombreRazon = normalizeText(existingRows[0].factura_nombre_razon);
+            payload.facturaNumero = normalizeText(existingRows[0].factura_numero);
             payload.facturaRut = normalizeText(existingRows[0].factura_rut);
             payload.facturaGiro = normalizeText(existingRows[0].factura_giro);
             payload.facturaDireccion = normalizeText(existingRows[0].factura_direccion);
@@ -7676,6 +7697,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
 
         if (!hasFacturaPayload) {
             payload.facturaNombreRazon = normalizeText(existingRows[0].factura_nombre_razon);
+            payload.facturaNumero = normalizeText(existingRows[0].factura_numero);
             payload.facturaRut = normalizeText(existingRows[0].factura_rut);
             payload.facturaGiro = normalizeText(existingRows[0].factura_giro);
             payload.facturaDireccion = normalizeText(existingRows[0].factura_direccion);
@@ -7684,6 +7706,14 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
             payload.facturaContacto = normalizeText(existingRows[0].factura_contacto);
             payload.facturaObservacion = normalizeText(existingRows[0].factura_observacion);
             payload.facturaMonto = existingRows[0].factura_monto === null ? null : Number(existingRows[0].factura_monto);
+        }
+
+        const canEditFacturaNumero = isSecretaryUser(req.authUser) && !isGuestUser(req.authUser);
+        if (!canEditFacturaNumero) {
+            payload.facturaNumero = normalizeText(existingRows[0].factura_numero);
+        }
+        if (payload.estado !== 'facturada') {
+            payload.facturaNumero = '';
         }
 
         const docsBefore = parseStoredDocumentList(existingRows[0].documentos);
@@ -7723,6 +7753,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
                     estado = ?,
                     comentario = ?,
                     factura_nombre_razon = ?,
+                    factura_numero = ?,
                     factura_rut = ?,
                     factura_giro = ?,
                     factura_direccion = ?,
@@ -7752,6 +7783,7 @@ app.put('/api/registros/:numIngreso', requireWriteAccess, async (req, res) => {
                 payload.estado || null,
                 payload.comentario || null,
                 payload.facturaNombreRazon || null,
+                payload.facturaNumero || null,
                 payload.facturaRut || null,
                 payload.facturaGiro || null,
                 payload.facturaDireccion || null,
@@ -8544,7 +8576,7 @@ app.get('/api/registros/buscar', async (req, res) => {
                 num_ingreso, nombre, rut, telefono, correo,
                 region, comuna, nombre_predio, rol,
                 num_lotes, estado, comentario,
-                factura_nombre_razon, factura_rut, factura_giro,
+                factura_nombre_razon, factura_numero, factura_rut, factura_giro,
                 factura_direccion, factura_comuna, factura_ciudad,
                 factura_contacto, factura_observacion, factura_monto,
                 documentos

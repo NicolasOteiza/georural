@@ -7,12 +7,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         form: document.getElementById('publicProgressForm'),
         rol: document.getElementById('publicProgressRol'),
         searchBtn: document.getElementById('publicProgressSearchBtn'),
+        clearBtn: document.getElementById('publicProgressClearBtn'),
         loading: document.getElementById('publicProgressLoading'),
         message: document.getElementById('publicProgressMessage'),
         resultSection: document.getElementById('publicProgressResultSection'),
         resultRol: document.getElementById('publicProgressResultRol'),
         resultNombre: document.getElementById('publicProgressNombre'),
         resultCorreo: document.getElementById('publicProgressCorreo'),
+        resultNombrePredio: document.getElementById('publicProgressNombrePredio'),
+        resultRegion: document.getElementById('publicProgressRegion'),
+        resultComuna: document.getElementById('publicProgressComuna'),
         historyBody: document.getElementById('publicProgressHistoryBody'),
         loginRouteNoticeOverlay: document.getElementById('loginRouteNoticeOverlay'),
         loginRouteNoticeUrl: document.getElementById('loginRouteNoticeUrl'),
@@ -45,6 +49,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         event.preventDefault();
         void handleSearchSubmit();
     });
+    if (ui.clearBtn) {
+        ui.clearBtn.addEventListener('click', handleClearClientView);
+    }
     if (ui.loginRouteNoticeCloseBtn) {
         ui.loginRouteNoticeCloseBtn.addEventListener('click', hideLoginRouteNoticePopup);
     }
@@ -256,6 +263,9 @@ function showResultSection(result = {}) {
     setFieldValue(ui.resultRol, result.rol);
     setFieldValue(ui.resultNombre, result.nombre);
     setFieldValue(ui.resultCorreo, result.correo);
+    setFieldValue(ui.resultNombrePredio, result.nombrePredio);
+    setFieldValue(ui.resultRegion, result.region);
+    setFieldValue(ui.resultComuna, result.comuna);
     ui.resultSection.classList.remove('hidden');
 }
 
@@ -267,6 +277,9 @@ function hideResultSection() {
     setFieldValue(ui.resultRol, '');
     setFieldValue(ui.resultNombre, '');
     setFieldValue(ui.resultCorreo, '');
+    setFieldValue(ui.resultNombrePredio, '');
+    setFieldValue(ui.resultRegion, '');
+    setFieldValue(ui.resultComuna, '');
     renderHistory([]);
     ui.resultSection.classList.add('hidden');
 }
@@ -436,6 +449,10 @@ function setSearchBusyState(isBusy) {
         ui.searchBtn.textContent = busy ? 'BUSCANDO...' : ui.searchBtn.dataset.defaultLabel;
     }
 
+    if (ui?.clearBtn) {
+        ui.clearBtn.disabled = busy;
+    }
+
     if (ui?.loading) {
         ui.loading.classList.toggle('hidden', !busy);
         ui.loading.setAttribute('aria-hidden', busy ? 'false' : 'true');
@@ -444,4 +461,17 @@ function setSearchBusyState(isBusy) {
 
 function normalizeText(value) {
     return String(value || '').trim();
+}
+
+function handleClearClientView() {
+    if (searchInProgress) {
+        return;
+    }
+
+    if (ui?.rol) {
+        ui.rol.value = '';
+        ui.rol.focus();
+    }
+    hideResultSection();
+    clearMessage();
 }

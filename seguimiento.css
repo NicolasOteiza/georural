@@ -91,6 +91,7 @@ body {
 }
 
 .seguimiento-search-btn,
+.seguimiento-clear-btn,
 .seguimiento-row-btn {
     border: none;
     border-radius: 7px;
@@ -108,7 +109,8 @@ body {
     background: #d4ac0d;
 }
 
-.seguimiento-search-btn:disabled {
+.seguimiento-search-btn:disabled,
+.seguimiento-clear-btn:disabled {
     opacity: 0.8;
     cursor: not-allowed;
 }
@@ -128,6 +130,23 @@ body {
     border: 2px solid rgba(42, 61, 107, 0.35);
     border-top-color: #2a3d6b;
     animation: seguimiento-button-spin 0.75s linear infinite;
+}
+
+.seguimiento-form-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.seguimiento-clear-btn {
+    background: #e1e8f5;
+    color: #2a3d6b;
+    border: 1px solid #8fa6c9;
+    padding: 10px 16px;
+}
+
+.seguimiento-clear-btn:hover {
+    background: #d0dced;
 }
 
 .seguimiento-row-btn {
@@ -530,7 +549,12 @@ body {
         gap: 10px;
     }
 
-    .seguimiento-search-btn {
+    .seguimiento-form-actions {
+        flex-direction: column;
+    }
+
+    .seguimiento-search-btn,
+    .seguimiento-clear-btn {
         width: 100%;
     }
 

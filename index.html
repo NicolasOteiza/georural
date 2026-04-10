@@ -26,7 +26,10 @@
                         <input type="text" id="publicProgressRol" maxlength="120" placeholder="Ej: 123-45">
                     </div>
                 </div>
-                <button type="submit" id="publicProgressSearchBtn" class="seguimiento-search-btn">BUSCAR PROGRESO</button>
+                <div class="seguimiento-form-actions">
+                    <button type="submit" id="publicProgressSearchBtn" class="seguimiento-search-btn">BUSCAR PROGRESO</button>
+                    <button type="button" id="publicProgressClearBtn" class="seguimiento-clear-btn">LIMPIAR</button>
+                </div>
             </form>
 
             <section id="publicProgressLoading" class="seguimiento-loader hidden" aria-live="polite" aria-hidden="true">
@@ -61,12 +64,26 @@
                 </div>
                 <div class="seguimiento-form-row">
                     <div class="seguimiento-field">
-                        <label for="publicProgressNombre">NOMBRE</label>
+                        <label for="publicProgressNombre">NOMBRE PROPIETARIO</label>
                         <input type="text" id="publicProgressNombre" readonly>
                     </div>
                     <div class="seguimiento-field">
                         <label for="publicProgressCorreo">CORREO</label>
                         <input type="text" id="publicProgressCorreo" readonly>
+                    </div>
+                </div>
+                <div class="seguimiento-form-row">
+                    <div class="seguimiento-field">
+                        <label for="publicProgressNombrePredio">NOMBRE PREDIO</label>
+                        <input type="text" id="publicProgressNombrePredio" readonly>
+                    </div>
+                    <div class="seguimiento-field">
+                        <label for="publicProgressRegion">REGION</label>
+                        <input type="text" id="publicProgressRegion" readonly>
+                    </div>
+                    <div class="seguimiento-field">
+                        <label for="publicProgressComuna">COMUNA</label>
+                        <input type="text" id="publicProgressComuna" readonly>
                     </div>
                 </div>
 
@@ -119,6 +136,6 @@
         </section>
     </div>
 
-    <script src="seguimiento.js?v=20260401-04"></script>
+    <script src="seguimiento.js?v=20260410-02"></script>
 </body>
 </html>
