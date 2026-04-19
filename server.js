@@ -1517,10 +1517,6 @@ function parseFacturaSolicitudPayload(body = {}) {
         return { isValid: false, message: 'Debes completar la DIRECCION para la factura.', payload: null };
     }
 
-    if (!payload.observacion) {
-        return { isValid: false, message: 'Debes completar la OBSERVACION para la factura.', payload: null };
-    }
-
     if (!payload.estado) {
         return { isValid: false, message: 'Estado de solicitud invalido. Usa PENDIENTE, ENVIADA o ANULADA.', payload: null };
     }

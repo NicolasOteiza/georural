@@ -462,7 +462,7 @@ const DATE_RANGE_FALLBACK_PAGE_SIZE = 10;
 const DATE_RANGE_MAX_PAGE_SIZE = 40;
 const SEARCH_MATCH_PAGE_SIZE = 12;
 const FACTURA_NUMBER_MAX_LENGTH = 80;
-const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaObservacion', 'facturaMonto'];
+const FACTURA_REQUIRED_FIELD_IDS = ['facturaNombreRazon', 'facturaRut', 'facturaGiro', 'facturaDireccion', 'facturaMonto'];
 const FACTURA_INLINE_ERROR_FIELD_IDS = [...FACTURA_REQUIRED_FIELD_IDS, 'facturaComuna', 'facturaCiudad', 'facturaContacto', 'facturaNumero'];
 const EXISTING_RECORD_SAVE_WARNING =
     'No se puede crear porque el registro ya existe. Si ha realizado cambios pulse en MODIFICAR para guardar los cambios.';
@@ -5802,10 +5802,6 @@ function validateInvoiceDraft(rawData, options = {}) {
 
     if (!data.direccion) {
         return { error: 'Debes completar la DIRECCION para la factura.', data: null, errorFieldId: 'facturaDireccion' };
-    }
-
-    if (!data.observacion) {
-        return { error: 'Debes completar la OBSERVACION para la factura.', data: null, errorFieldId: 'facturaObservacion' };
     }
 
     if (requireAmount && !data.montoFacturar) {
