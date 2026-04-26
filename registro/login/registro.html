@@ -1233,10 +1233,18 @@
 
       window.SIA_CHATBOT_CONFIG = {
         enabled: true,
-        webhookUrl: "http://192.168.1.74:5678/webhook/f1649514-9baf-4376-a972-68500bdec158/chat"
+        webhookUrl: "https://n8n.mi-registro.cl/webhook/2947fc8b-9cb7-481e-b2d3-3a28945655de/chat",
+        metadata: {
+          user_name: "<?php echo $_SESSION['user_name']; ?>",
+          nombre_sistema: "geo_rural"
+        },
+        windowWidth: "330px",
+        windowHeight: "500px",
+        windowWidthMobile: "calc(100vw - 20px)",
+        windowHeightMobile: "68vh"
       };
     </script>
-    <script src="../../assets/js/chatbot.js?v=20260420-01"></script>
-    <script src="../../script.js?v=20260410-01"></script>
+    <script src="../../assets/js/chatbot.js?v=20260426-01"></script>
+    <script src="../../script.js?v=20260426-01"></script>
 </body>
 </html>

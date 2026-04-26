@@ -1737,12 +1737,6 @@ async function handleOpenMonthlyUtmEdit() {
 }
 
 function notifyChatbotAuthenticated(user) {
-    if (typeof window.setSiaChatbotSessionActive === 'function') {
-        window.setSiaChatbotSessionActive(true);
-    }
-    if (typeof window.initSiaChatbot === 'function') {
-        void window.initSiaChatbot();
-    }
     try {
         window.dispatchEvent(
             new CustomEvent('sia:user-authenticated', {
@@ -1751,6 +1745,12 @@ function notifyChatbotAuthenticated(user) {
         );
     } catch (error) {
         // Ignorar errores de compatibilidad del navegador.
+    }
+    if (typeof window.setSiaChatbotSessionActive === 'function') {
+        window.setSiaChatbotSessionActive(true);
+    }
+    if (typeof window.initSiaChatbot === 'function') {
+        void window.initSiaChatbot();
     }
 }
 
