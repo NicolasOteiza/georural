@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="geo-rural-api-base" content="">
     <title>Formulario de Registro - Geo Rural</title>
-    <link rel="icon" type="image/png" href="../../logo.png">
+    <link rel="icon" type="image/png" href="../../assets/img/logo.png">
     <link rel="stylesheet" href="../../styles.css?v=20260408-15">
 </head>
 <body>
@@ -439,7 +439,7 @@
                     <h2>FORMULARIO DE REGISTRO</h2>
                     <span>Registro de Datos</span>
                 </div>
-                <img src="../../logo.png" alt="Geo Rural Logo" class="logo">
+                <img src="../../assets/img/logo.png" alt="Geo Rural Logo" class="logo">
             </div>
             <div id="registroActionsRow" class="button-row">
                 <button type="button" class="guardar">GUARDAR</button>
@@ -1226,6 +1226,17 @@
 
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script>
+      if (window.location.hostname === "localhost" && window.location.port !== "3004") {
+        window.SIA_API_BASE_URL = "http://localhost:3004/api";
+      }
+
+      window.SIA_CHATBOT_CONFIG = {
+        enabled: true,
+        webhookUrl: "http://192.168.1.74:5678/webhook/f1649514-9baf-4376-a972-68500bdec158/chat"
+      };
+    </script>
+    <script src="../../assets/js/chatbot.js?v=20260420-01"></script>
     <script src="../../script.js?v=20260410-01"></script>
 </body>
 </html>

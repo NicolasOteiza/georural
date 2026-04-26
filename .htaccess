@@ -10,8 +10,13 @@ ServerSignature Off
     # Si entran a /registro/login sin archivo, completar ruta interna.
     RewriteRule ^registro/login/?$ /geo_rural/registro/login/registro.html [R=302,L]
 
+    RewriteRule ^seguimiento/?$ /geo_rural/index.html [R=302,L]
+    RewriteRule ^mantenimiento/?$ /geo_rural/pages/mantenimiento.html [R=302,L]
+    RewriteRule ^seguimiento\.html$ /geo_rural/pages/seguimiento.html [L]
+    RewriteRule ^mantenimiento\.html$ /geo_rural/pages/mantenimiento.html [L]
+
     # Bloquea acceso directo a carpetas internas sensibles.
-    RewriteRule ^(?:database|logs|node_modules|\.git)(?:/|$) - [F,L]
+    RewriteRule ^(?:database|logs|node_modules|server|\.git)(?:/|$) - [F,L]
 </IfModule>
 
 # Bloquea archivos sensibles y de respaldo desde la web.
