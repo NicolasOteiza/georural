@@ -262,6 +262,8 @@ const MAINTENANCE_ALLOWED_PAGE_PATHS = new Set([
     '/mantenimiento.html',
     '/mantenimiento.css',
     '/mantenimiento.js',
+    '/assets/img/logo.png',
+    '/assets/img/logo.svg',
     '/logo.png',
     '/logo.svg',
     '/favicon.ico'
@@ -3912,7 +3914,20 @@ function isApiRequestPath(pathname) {
 }
 
 function isPublicFrontendPath(pathname) {
-    return PUBLIC_FRONTEND_PATHS.has(String(pathname || ''));
+    const normalizedPath = String(pathname || '');
+    if (!normalizedPath) {
+        return false;
+    }
+
+    if (PUBLIC_FRONTEND_PATHS.has(normalizedPath)) {
+        return true;
+    }
+
+    if (normalizedPath === '/assets' || normalizedPath.startsWith('/assets/')) {
+        return true;
+    }
+
+    return false;
 }
 
 function isKnownFrontendPath(pathname) {
