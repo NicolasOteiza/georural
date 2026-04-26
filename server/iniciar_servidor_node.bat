@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 if "%APP_ENV%"=="" set "APP_ENV=development"
 if exist ".env" (

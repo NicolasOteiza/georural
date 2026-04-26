@@ -1736,6 +1736,35 @@ async function handleOpenMonthlyUtmEdit() {
     }
 }
 
+function notifyChatbotAuthenticated(user) {
+    if (typeof window.setSiaChatbotSessionActive === 'function') {
+        window.setSiaChatbotSessionActive(true);
+    }
+    if (typeof window.initSiaChatbot === 'function') {
+        void window.initSiaChatbot();
+    }
+    try {
+        window.dispatchEvent(
+            new CustomEvent('sia:user-authenticated', {
+                detail: { user: user || null }
+            })
+        );
+    } catch (error) {
+        // Ignorar errores de compatibilidad del navegador.
+    }
+}
+
+function notifyChatbotLoggedOut() {
+    if (typeof window.setSiaChatbotSessionActive === 'function') {
+        window.setSiaChatbotSessionActive(false);
+    }
+    try {
+        window.dispatchEvent(new Event('sia:user-logged-out'));
+    } catch (error) {
+        // Ignorar errores de compatibilidad del navegador.
+    }
+}
+
 function showAppForUser(user) {
     const userRole = normalizeUserRole(user?.role);
     const userRoleLabel = isGuestUser(user) ? 'INVITADO' : userRole;
@@ -1746,6 +1775,7 @@ function showAppForUser(user) {
         ui.appTopPanels.classList.remove('hidden');
     }
     document.body.classList.add('app-authenticated');
+    notifyChatbotAuthenticated(user);
     applyRoleLayoutClass(user);
     applyRoleActionButtonsPlacement(user);
     applyCommentsHistoryPlacement(user);
@@ -1955,6 +1985,7 @@ function showAuthCard(message = '') {
         ui.appTopPanels.classList.add('hidden');
     }
     document.body.classList.remove('app-authenticated');
+    notifyChatbotLoggedOut();
     applyRoleLayoutClass(null);
     applyRoleActionButtonsPlacement(null);
     applyCommentsHistoryPlacement(null);

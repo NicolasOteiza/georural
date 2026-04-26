@@ -1,4 +1,4 @@
-﻿const API_BASE_CANDIDATES = resolveApiBaseCandidates();
+const API_BASE_CANDIDATES = resolveApiBaseCandidates();
 let ui = null;
 let searchInProgress = false;
 
